@@ -1,0 +1,85 @@
+services:
+  backend:
+    build: ./souvenirx-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - upload_data:/app/uploads
+    env_file: ./souvenirx-backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  worker:
+    build:
+      context: ./souvenirx-backend
+      dockerfile: Dockerfile.worker
+    env_file: ./souvenirx-backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  frontend:
+    build: ./souvenirx-frontend
+    ports:
+      - "3000:3000"
+    env_file: ./souvenirx-frontend/.env
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    env_file: ./souvenirx-backend/.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-souvenirx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-souvenirx_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-souvenirx}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-souvenirx}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  pg_data:
+  redis_data:
+  upload_data:
+
+networks:
+  app-network:
+    driver: bridge
