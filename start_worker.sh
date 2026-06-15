@@ -22,17 +22,16 @@ echo "Redis URL: ${REDIS_URL}"
 # Parses host:port from REDIS_URL using Python (already in the image) so it
 # correctly handles both redis:// and rediss:// schemes.
 # ---------------------------------------------------------------------------
-_redis_host_port() {
-    python3 - <<'EOF'
-import sys, os
+# Output host and port on ONE line so `read` can split both into variables.
+# (Two separate print() calls would cause a BrokenPipeError because `read`
+# closes the pipe after consuming the first line, leaving the second unread.)
+read -r REDIS_HOST REDIS_PORT < <(python3 - <<'EOF'
+import os
 from urllib.parse import urlparse
 u = urlparse(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-print(u.hostname or "localhost")
-print(u.port or 6379)
+print(u.hostname or "localhost", u.port or 6379)
 EOF
-}
-
-read -r REDIS_HOST REDIS_PORT < <(_redis_host_port)
+)
 
 echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT} (timeout ${MAX_WAIT}s)..."
 waited=0
