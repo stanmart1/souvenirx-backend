@@ -161,7 +161,7 @@ async def resend_verification(user: User = Depends(get_current_user), db: AsyncS
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Customer login - only allows users with 'customer' role"""
+    """Customer login - allows users with 'customer' role (can have multiple roles)"""
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:login:{client_ip}", 10, 300):
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
@@ -170,9 +170,13 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    # Only allow customers to login via this endpoint
-    if user.role != "customer":
+    # Check if user has customer role
+    if not user.has_role("customer"):
         raise HTTPException(status_code=403, detail="Please use the appropriate login page for your account type")
+    
+    # Set active role to customer
+    user.active_role = "customer"
+    await db.flush()
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -182,7 +186,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
 
 @router.post("/affiliate/login", response_model=TokenResponse)
 async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Affiliate login - only allows users with 'affiliate' role"""
+    """Affiliate login - allows users with 'affiliate' role (can have multiple roles)"""
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:affiliate_login:{client_ip}", 10, 300):
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
@@ -191,9 +195,13 @@ async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession 
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    # Only allow affiliates to login via this endpoint
-    if user.role != "affiliate":
+    # Check if user has affiliate role
+    if not user.has_role("affiliate"):
         raise HTTPException(status_code=403, detail="This login is for affiliates only. Please use the customer login page.")
+    
+    # Set active role to affiliate
+    user.active_role = "affiliate"
+    await db.flush()
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -203,7 +211,7 @@ async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession 
 
 @router.post("/admin/login", response_model=TokenResponse)
 async def admin_login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Admin login - only allows users with 'admin' role"""
+    """Admin login - allows users with 'admin' role (can have multiple roles)"""
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:admin_login:{client_ip}", 10, 300):
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
@@ -212,9 +220,13 @@ async def admin_login(req: LoginRequest, request: Request, db: AsyncSession = De
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    # Only allow admins to login via this endpoint
-    if user.role != "admin":
+    # Check if user has admin role
+    if not user.has_role("admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Set active role to admin
+    user.active_role = "admin"
+    await db.flush()
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -497,3 +509,28 @@ async def lookup_guest_orders(
         }
         for o in orders
     ]
+
+
+@router.post("/switch-role")
+async def switch_role(
+    role: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the active role for the current user"""
+    # Validate that user has this role
+    if not user.has_role(role):
+        raise HTTPException(
+            status_code=403, 
+            detail=f"You do not have the '{role}' role. Available roles: {', '.join(user.get_roles())}"
+        )
+    
+    # Update active role
+    user.active_role = role
+    await db.flush()
+    
+    return {
+        "message": f"Switched to {role} role",
+        "active_role": role,
+        "available_roles": user.get_roles()
+    }

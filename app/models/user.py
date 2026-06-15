@@ -24,7 +24,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(20))
-    role: Mapped[str] = mapped_column(String(20), default="customer", nullable=False)
+    role: Mapped[str] = mapped_column(String(100), default="customer", nullable=False)  # Comma-separated roles: "customer,affiliate,admin"
+    active_role: Mapped[Optional[str]] = mapped_column(String(20))  # Current active role for session
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_token: Mapped[Optional[str]] = mapped_column(String(255))
@@ -37,6 +38,28 @@ class User(Base):
     affiliate: Mapped[Optional["Affiliate"]] = relationship(back_populates="user", uselist=False)
     cart_items: Mapped[list["CartItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     wishlist_items: Mapped[list["WishlistItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    
+    def get_roles(self) -> list[str]:
+        """Get list of roles for this user"""
+        return [r.strip() for r in self.role.split(",") if r.strip()]
+    
+    def has_role(self, role: str) -> bool:
+        """Check if user has a specific role"""
+        return role in self.get_roles()
+    
+    def add_role(self, role: str) -> None:
+        """Add a role to user if not already present"""
+        roles = self.get_roles()
+        if role not in roles:
+            roles.append(role)
+            self.role = ",".join(roles)
+    
+    def remove_role(self, role: str) -> None:
+        """Remove a role from user"""
+        roles = self.get_roles()
+        if role in roles:
+            roles.remove(role)
+            self.role = ",".join(roles) if roles else "customer"
 
 
 class Address(Base):
