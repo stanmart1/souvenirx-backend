@@ -605,13 +605,9 @@ async def update_product(product_id: str, body: ProductUpdate, admin: User = Dep
 
     await db.flush()
     
-    # Invalidate product caches
-    from app.redis import get_redis
-    redis = await get_redis()
-    if redis:
-        await redis.delete("products:featured")
-        await redis.delete(f"product:{product.slug}")
-    
+    from app.redis import cache_delete
+    await cache_delete("products:featured", f"product:{product.slug}")
+
     return {"message": "Product updated"}
 
 
@@ -1505,12 +1501,9 @@ async def update_homepage_section(
     
     await db.flush()
     
-    # Invalidate homepage cache
-    from app.redis import get_redis
-    redis = await get_redis()
-    if redis:
-        await redis.delete("homepage:content")
-    
+    from app.redis import cache_delete
+    await cache_delete("homepage:content")
+
     return {"message": "Section updated"}
 
 
@@ -2006,13 +1999,9 @@ async def create_ad(
     db.add(ad)
     await db.flush()
     
-    # Invalidate ads cache
-    from app.redis import get_redis
-    redis = await get_redis()
-    if redis:
-        await redis.delete("ads:all")
-        await redis.delete(f"ads:{body.position}")
-    
+    from app.redis import cache_delete
+    await cache_delete("ads:all", f"ads:{body.position}")
+
     return {"id": ad.id, "message": "Ad created successfully"}
 
 
@@ -2052,13 +2041,9 @@ async def update_ad(
     
     await db.flush()
     
-    # Invalidate ads cache
-    from app.redis import get_redis
-    redis = await get_redis()
-    if redis:
-        await redis.delete("ads:all")
-        await redis.delete(f"ads:{ad.position}")
-    
+    from app.redis import cache_delete
+    await cache_delete("ads:all", f"ads:{ad.position}")
+
     return {"message": "Ad updated successfully"}
 
 
@@ -2076,6 +2061,8 @@ async def delete_ad(
     
     await db.delete(ad)
     await db.flush()
-    
-    # Invalidate ads cache
-    from app.redis import get_redis
+
+    from app.redis import cache_delete
+    await cache_delete("ads:all", f"ads:{ad.position}")
+
+    return {"message": "Ad deleted successfully"}

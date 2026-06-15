@@ -16,68 +16,48 @@ router = APIRouter()
 
 async def invalidate_product_cache(slug: str):
     """Helper to invalidate product-related caches."""
-    from app.redis import get_redis
-    redis = await get_redis()
-    if redis:
-        await redis.delete(f"product:{slug}")
-        await redis.delete("products:featured")
+    from app.redis import cache_delete
+    await cache_delete(f"product:{slug}", "products:featured")
 
 
 @router.get("/homepage-content")
 async def get_homepage_content(db: AsyncSession = Depends(get_db)):
     """Public endpoint to fetch homepage content with caching."""
-    from app.redis import get_redis
-    
-    # Try to get from cache first
-    redis = await get_redis()
-    if redis:
-        cached = await redis.get("homepage:content")
-        if cached:
-            import json
-            return json.loads(cached)
-    
-    # If not cached, fetch from database
+    from app.redis import cache_get, cache_set
+
+    cached = await cache_get("homepage:content")
+    if cached is not None:
+        return cached
+
     result = await db.execute(
         select(HomepageContent)
         .where(HomepageContent.is_active == True)
         .order_by(HomepageContent.sort_order)
     )
     sections = result.scalars().all()
-    
+
     content_dict = {}
     for section in sections:
         content_dict[section.section] = section.content
-    
-    # Cache for 5 minutes (300 seconds)
-    if redis:
-        import json
-        await redis.setex("homepage:content", 300, json.dumps(content_dict))
-    
+
+    await cache_set("homepage:content", content_dict, ex=300)
     return content_dict
 
 
 @router.get("/categories")
 async def list_categories(db: AsyncSession = Depends(get_db)):
     """List categories with caching."""
-    from app.redis import get_redis
-    
-    # Try to get from cache first
-    redis = await get_redis()
-    if redis:
-        cached = await redis.get("categories:list")
-        if cached:
-            import json
-            return json.loads(cached)
-    
-    # If not cached, fetch from database
+    from app.redis import cache_get, cache_set
+
+    cached = await cache_get("categories:list")
+    if cached is not None:
+        return cached
+
     result = await db.execute(select(Category).order_by(Category.sort_order))
     cats = result.scalars().all()
     response = [{"id": c.id, "slug": c.slug, "name": c.name, "icon": c.icon} for c in cats]
-    
-    # Cache for 10 minutes (600 seconds)
-    if redis:
-        import json
-        await redis.setex("categories:list", 600, json.dumps(response))
+
+    await cache_set("categories:list", response, ex=600)
     
     return response
 
@@ -85,17 +65,12 @@ async def list_categories(db: AsyncSession = Depends(get_db)):
 @router.get("/featured")
 async def featured_products(db: AsyncSession = Depends(get_db)):
     """Featured products with caching."""
-    from app.redis import get_redis
-    
-    # Try to get from cache first
-    redis = await get_redis()
-    if redis:
-        cached = await redis.get("products:featured")
-        if cached:
-            import json
-            return json.loads(cached)
-    
-    # If not cached, fetch from database
+    from app.redis import cache_get, cache_set
+
+    cached = await cache_get("products:featured")
+    if cached is not None:
+        return cached
+
     result = await db.execute(
         select(Product)
         .where(Product.is_active == True)
@@ -110,12 +85,8 @@ async def featured_products(db: AsyncSession = Depends(get_db)):
     )
     products = result.scalars().all()
     response = [_product_response(p) for p in products]
-    
-    # Cache for 2 minutes (120 seconds)
-    if redis:
-        import json
-        await redis.setex("products:featured", 120, json.dumps(response))
-    
+
+    await cache_set("products:featured", response, ex=120)
     return response
 
 
@@ -239,15 +210,11 @@ async def related_products(
 @router.get("/{slug}")
 async def get_product(slug: str, db: AsyncSession = Depends(get_db)):
     """Get product by slug with caching."""
-    from app.redis import get_redis
-    
-    # Try to get from cache first
-    redis = await get_redis()
-    if redis:
-        cached = await redis.get(f"product:{slug}")
-        if cached:
-            import json
-            return json.loads(cached)
+    from app.redis import cache_get, cache_set
+
+    cached = await cache_get(f"product:{slug}")
+    if cached is not None:
+        return cached
     
     # If not cached, fetch from database
     result = await db.execute(
@@ -302,11 +269,7 @@ async def get_product(slug: str, db: AsyncSession = Depends(get_db)):
         grouped_products = result.scalars().all()
         response["grouped_products"] = [_product_response(p) for p in grouped_products]
     
-    # Cache for 5 minutes (300 seconds)
-    if redis:
-        import json
-        await redis.setex(f"product:{slug}", 300, json.dumps(response))
-    
+    await cache_set(f"product:{slug}", response, ex=300)
     return response
 
 
@@ -364,36 +327,32 @@ async def get_public_ads(
     db: AsyncSession = Depends(get_db),
 ):
     """Public endpoint to fetch active ads with caching."""
-    from app.redis import get_redis
+    from app.redis import cache_get, cache_set
     from datetime import datetime, timezone
-    
+
     cache_key = f"ads:{position or 'all'}"
-    redis = await get_redis()
-    
-    if redis:
-        cached = await redis.get(cache_key)
-        if cached:
-            return cached
-    
-    from datetime import datetime, timezone
+
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     now = datetime.now(timezone.utc)
-    
+
     query = select(Ad).where(Ad.is_active == True)
     if position:
         query = query.where(Ad.position == position)
-    
-    # Filter by date range
+
     query = query.where(
         (Ad.start_date.is_(None)) | (Ad.start_date <= now)
     )
     query = query.where(
         (Ad.end_date.is_(None)) | (Ad.end_date >= now)
     )
-    
+
     query = query.order_by(Ad.sort_order, Ad.created_at.desc())
     result = await db.execute(query)
     ads = result.scalars().all()
-    
+
     response = [
         {
             "id": ad.id,
@@ -406,10 +365,8 @@ async def get_public_ads(
         }
         for ad in ads
     ]
-    
-    if redis:
-        await redis.set(cache_key, response, ex=300)  # Cache for 5 minutes
-    
+
+    await cache_set(cache_key, response, ex=300)
     return response
 
 

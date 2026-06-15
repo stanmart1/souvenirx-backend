@@ -1,9 +1,13 @@
+import json
+import logging
 import ssl
-from typing import Optional
+from typing import Any, Optional
 
 import redis.asyncio as aioredis
 
 from app.config import settings
+
+logger = logging.getLogger("souvenirx.redis")
 
 
 def build_redis_ssl_context() -> Optional[ssl.SSLContext]:
@@ -111,3 +115,45 @@ async def check_idempotency(key: str) -> bool:
         return result is not None
     except Exception:
         return True
+
+
+# ---------------------------------------------------------------------------
+# Safe cache helpers — Redis is a cache; errors must NEVER crash a request.
+# All three helpers catch every exception and degrade gracefully.
+# ---------------------------------------------------------------------------
+
+async def cache_get(key: str) -> Optional[Any]:
+    """Get and JSON-decode a cached value.
+
+    Returns the decoded Python object on a cache hit, None on a miss or any
+    Redis error (SSL failures, connection errors, etc.).
+    """
+    try:
+        raw = await redis_client.get(key)
+        return json.loads(raw) if raw is not None else None
+    except Exception as exc:
+        logger.warning("Redis cache_get(%r) failed: %s", key, exc)
+        return None
+
+
+async def cache_set(key: str, value: Any, ex: int = 300) -> bool:
+    """JSON-encode *value* and store it under *key* with TTL *ex* seconds.
+
+    Returns True on success, False (silently) on any Redis error.
+    """
+    try:
+        await redis_client.setex(key, ex, json.dumps(value, default=str))
+        return True
+    except Exception as exc:
+        logger.warning("Redis cache_set(%r) failed: %s", key, exc)
+        return False
+
+
+async def cache_delete(*keys: str) -> None:
+    """Delete one or more keys from the cache, ignoring any Redis error."""
+    if not keys:
+        return
+    try:
+        await redis_client.delete(*keys)
+    except Exception as exc:
+        logger.warning("Redis cache_delete%r failed: %s", keys, exc)

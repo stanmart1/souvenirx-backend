@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     redis_ssl_ca_certs: str = ""  # Path to CA certificate file for SSL verification
     redis_ssl_certfile: str = ""  # Path to client certificate file
     redis_ssl_keyfile: str = ""  # Path to client key file
-    redis_ssl_cert_reqs: str = "required"  # "none", "optional", or "required"
+    # Default "none" so self-signed Redis certificates (e.g. Coolify-provisioned
+    # Redis on a non-standard port) work without extra env-var configuration.
+    # Set to "required" + REDIS_SSL_CA_CERTS when using a CA-signed cert.
+    redis_ssl_cert_reqs: str = "none"  # "none", "optional", or "required"
 
     # JWT
     jwt_secret: str = "change-me-to-a-random-secret-key"
