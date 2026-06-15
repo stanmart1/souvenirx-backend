@@ -1596,7 +1596,10 @@ async def list_reviews(admin: User = Depends(get_current_admin), db: AsyncSessio
         {
             "id": str(r.id), "product_id": str(r.product_id), "author": r.author,
             "rating": r.rating, "title": r.title, "text": r.text,
-            "is_verified": r.is_verified, "created_at": r.created_at.isoformat(),
+            "is_verified": r.is_verified, "is_approved": r.is_approved,
+            "is_featured": r.is_featured, "admin_reply": r.admin_reply,
+            "admin_reply_at": r.admin_reply_at.isoformat() if r.admin_reply_at else None,
+            "created_at": r.created_at.isoformat(),
         }
         for r in result.scalars().all()
     ]

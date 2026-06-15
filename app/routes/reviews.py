@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.review import Review
 from app.models.product import Product
 from app.models.user import User
-from app.middleware.auth import get_current_user, get_optional_user
+from app.middleware.auth import get_current_user, get_optional_user, get_current_admin
 from app.redis import check_rate_limit
 from app.schemas.product import ReviewCreate
 
@@ -127,3 +127,102 @@ async def mark_helpful(review_id: str, request: Request, db: AsyncSession = Depe
     review.helpful_count += 1
     await db.flush()
     return {"helpful": review.helpful_count}
+
+
+# ─── Admin Routes ─────────────────────────────────────────────────────────────
+
+@router.patch("/admin/{review_id}/approve")
+async def admin_approve_review(
+    review_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: Approve a review."""
+    import uuid
+    result = await db.execute(select(Review).where(Review.id == uuid.UUID(review_id)))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    review.is_approved = True
+    await db.flush()
+    return {"message": "Review approved"}
+
+
+@router.patch("/admin/{review_id}/reject")
+async def admin_reject_review(
+    review_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: Reject (unapprove) a review."""
+    import uuid
+    result = await db.execute(select(Review).where(Review.id == uuid.UUID(review_id)))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    review.is_approved = False
+    await db.flush()
+    return {"message": "Review rejected"}
+
+
+@router.patch("/admin/{review_id}/feature")
+async def admin_feature_review(
+    review_id: str,
+    featured: bool,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: Feature/unfeature a review."""
+    import uuid
+    result = await db.execute(select(Review).where(Review.id == uuid.UUID(review_id)))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    review.is_featured = featured
+    await db.flush()
+    return {"message": f"Review {'featured' if featured else 'unfeatured'}"}
+
+
+@router.post("/admin/{review_id}/reply")
+async def admin_reply_to_review(
+    review_id: str,
+    reply: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: Add or update reply to a review."""
+    import uuid
+    from datetime import datetime, timezone
+    
+    result = await db.execute(select(Review).where(Review.id == uuid.UUID(review_id)))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    review.admin_reply = reply
+    review.admin_reply_at = datetime.now(timezone.utc)
+    await db.flush()
+    return {"message": "Reply added"}
+
+
+@router.delete("/admin/{review_id}/reply")
+async def admin_delete_reply(
+    review_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: Delete reply from a review."""
+    import uuid
+    
+    result = await db.execute(select(Review).where(Review.id == uuid.UUID(review_id)))
+    review = result.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    review.admin_reply = None
+    review.admin_reply_at = None
+    await db.flush()
+    return {"message": "Reply deleted"}
