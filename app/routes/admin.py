@@ -2687,6 +2687,96 @@ async def reject_logo(
     return {"message": "Logo rejected"}
 
 
+@router.post("/logos/bulk-approve")
+async def bulk_approve_logos(
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk approve logo uploads"""
+    upload_ids = body.get("upload_ids", [])
+    
+    if not upload_ids:
+        raise HTTPException(status_code=400, detail="upload_ids required")
+    
+    count = 0
+    for upload_id in upload_ids:
+        try:
+            upload_uuid = uuid.UUID(upload_id)
+            result = await db.execute(select(LogoUpload).where(LogoUpload.id == upload_uuid))
+            upload = result.scalar_one_or_none()
+            
+            if upload:
+                upload.status = LogoUploadStatus.approved
+                upload.reviewed_by = admin.id
+                upload.reviewed_at = datetime.now(timezone.utc)
+                count += 1
+        except ValueError:
+            continue
+    
+    await db.flush()
+    return {"message": f"{count} logos approved"}
+
+
+@router.post("/logos/bulk-reject")
+async def bulk_reject_logos(
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk reject logo uploads"""
+    upload_ids = body.get("upload_ids", [])
+    reason = body.get("reason", "Bulk rejection")
+    
+    if not upload_ids:
+        raise HTTPException(status_code=400, detail="upload_ids required")
+    
+    count = 0
+    for upload_id in upload_ids:
+        try:
+            upload_uuid = uuid.UUID(upload_id)
+            result = await db.execute(select(LogoUpload).where(LogoUpload.id == upload_uuid))
+            upload = result.scalar_one_or_none()
+            
+            if upload:
+                upload.status = LogoUploadStatus.rejected
+                upload.rejection_reason = reason
+                upload.reviewed_by = admin.id
+                upload.reviewed_at = datetime.now(timezone.utc)
+                count += 1
+        except ValueError:
+            continue
+    
+    await db.flush()
+    return {"message": f"{count} logos rejected"}
+
+
+@router.get("/logos/{upload_id}/download")
+async def download_logo(
+    upload_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get download URL for original logo"""
+    try:
+        upload_uuid = uuid.UUID(upload_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid upload ID")
+    
+    result = await db.execute(select(LogoUpload).where(LogoUpload.id == upload_uuid))
+    upload = result.scalar_one_or_none()
+    
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    
+    return {
+        "file_url": upload.file_url,
+        "file_name": upload.file_name,
+        "mime_type": upload.mime_type,
+    }
+
+
+
 # --- Cart Management ---
 @router.get("/carts")
 async def list_all_carts(
