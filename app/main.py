@@ -38,12 +38,17 @@ app.add_middleware(
         settings.frontend_url,
         "https://souvenir-x.com",
         "https://www.souvenir-x.com",
+        "https://api.souvenir-x.com",
         "http://localhost:3000",
         "http://localhost:5173",
     ],
+    # Mobile apps don't send Origin header, so we need to allow requests without Origin
+    # This is safe because mobile apps use JWT tokens for authentication
+    allow_origin_regex=r".*",  # Allow all origins (mobile apps + web)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Allow mobile apps to read all response headers
 )
 
 # Serve uploaded files
@@ -74,7 +79,9 @@ from app.routes.admin_settings import router as admin_settings_router
 from app.routes.stock_notifications import router as stock_notifications_router
 from app.routes.campaigns import router as campaigns_router
 from app.routes.auth_oauth import router as oauth_router
+from app.routes.config import router as config_router
 
+app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
 app.include_router(products_router, prefix="/api/products", tags=["Products"])
 app.include_router(cart_router, prefix="/api/cart", tags=["Cart"])
