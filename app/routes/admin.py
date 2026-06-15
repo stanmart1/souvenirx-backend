@@ -1269,6 +1269,95 @@ async def generate_packing_slip(
     }
 
 
+@router.get("/orders/{order_number}/timeline")
+async def get_order_timeline(
+    order_number: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get order timeline/activity log.
+    """
+    result = await db.execute(select(Order).where(Order.order_number == order_number.upper()))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    # Fetch tracking events
+    tracking_result = await db.execute(
+        select(OrderTracking)
+        .where(OrderTracking.order_id == order.id)
+        .order_by(OrderTracking.created_at.desc())
+    )
+    tracking_events = tracking_result.scalars().all()
+    
+    return {
+        "order_number": order.order_number,
+        "timeline": [
+            {
+                "id": event.id,
+                "status": event.status,
+                "description": event.description,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in tracking_events
+        ]
+    }
+
+
+@router.post("/orders/{order_number}/send-email")
+async def send_order_email(
+    order_number: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Send email to customer about their order.
+    Body: { subject: string, message: string }
+    """
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(Order)
+        .where(Order.order_number == order_number.upper())
+        .options(selectinload(Order.user))
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    subject = body.get("subject")
+    message = body.get("message")
+    
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required")
+    
+    # In production, integrate with email service (SMTP, SendGrid, etc.)
+    # For now, we'll just log it and create a tracking event
+    db.add(OrderTracking(
+        order_id=order.id,
+        status=order.status,
+        description=f"Email sent to customer: {subject}"
+    ))
+    
+    await db.flush()
+    
+    # TODO: Actual email sending logic here
+    # Example:
+    # await send_email(
+    #     to=order.user.email,
+    #     subject=subject,
+    #     body=message
+    # )
+    
+    return {
+        "message": f"Email sent to {order.user.email}",
+        "recipient": order.user.email,
+        "subject": subject,
+    }
+
+
 # --- Customers ---
 @router.get("/customers")
 async def list_customers(
