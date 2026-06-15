@@ -28,6 +28,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_token: Mapped[Optional[str]] = mapped_column(String(255))
+    tags: Mapped[Optional[str]] = mapped_column(String(500))  # Comma-separated tags for segmentation
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     addresses: Mapped[list["Address"]] = relationship(back_populates="user", cascade="all, delete-orphan")

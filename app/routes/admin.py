@@ -1618,6 +1618,90 @@ async def calculate_customer_ltv(
     }
 
 
+@router.patch("/customers/{customer_id}/tags")
+async def update_customer_tags(
+    customer_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update customer tags for segmentation"""
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+    )
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    tags = body.get("tags", "")
+    customer.tags = tags
+    
+    await db.flush()
+    return {"message": "Tags updated", "tags": tags}
+
+
+@router.get("/customers/export")
+async def export_customers_csv(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export customer list as CSV"""
+    from io import StringIO
+    import csv
+    from sqlalchemy import func
+    
+    # Get all customers with order stats
+    result = await db.execute(
+        select(
+            User.id,
+            User.full_name,
+            User.email,
+            User.phone,
+            User.tags,
+            User.is_active,
+            User.created_at,
+            func.count(Order.id).label("total_orders"),
+            func.coalesce(func.sum(Order.total), 0).label("total_spent"),
+        )
+        .outerjoin(Order, (Order.user_id == User.id) & (Order.payment_status == PaymentStatus.success.value))
+        .where(User.role == UserRole.customer.value)
+        .group_by(User.id)
+        .order_by(User.created_at.desc())
+    )
+    customers = result.all()
+    
+    # Create CSV
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "ID", "Name", "Email", "Phone", "Tags", "Status", 
+        "Joined", "Total Orders", "Total Spent (NGN)"
+    ])
+    
+    for customer in customers:
+        writer.writerow([
+            str(customer.id),
+            customer.full_name,
+            customer.email,
+            customer.phone or "",
+            customer.tags or "",
+            "Active" if customer.is_active else "Inactive",
+            customer.created_at.strftime("%Y-%m-%d"),
+            customer.total_orders,
+            customer.total_spent / 100,  # Convert from kobo to naira
+        ])
+    
+    csv_content = output.getvalue()
+    output.close()
+    
+    from fastapi.responses import Response
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=customers_export.csv"}
+    )
+
+
 # --- Affiliates ---
 @router.get("/affiliates")
 async def list_affiliates(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
