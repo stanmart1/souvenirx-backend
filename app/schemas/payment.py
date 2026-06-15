@@ -26,6 +26,28 @@ class AffiliatePayoutRequest(BaseModel):
     amount: Optional[int] = None
 
 
+class DeliveryZoneCreate(BaseModel):
+    zone_name: str
+    countries: list[str] = ["Nigeria"]
+    states: list[str] = []
+    lgas: list[str] = []
+    zone_type: str = "state"
+    standard_fee: int
+    express_fee: int
+    eta_text: str
+    is_active: bool = True
+    free_shipping_threshold: int = 0
+    weight_fee_per_kg: int = 0
+    volume_fee_per_unit: int = 0
+    min_days: int = 3
+    max_days: int = 7
+    is_international: bool = False
+    customs_handling_fee: int = 0
+    border_crossing_fee: int = 0
+    default_carrier: Optional[str] = None
+    auto_assign: bool = True
+
+
 class DeliveryZoneUpdate(BaseModel):
     standard_fee: Optional[int] = None
     express_fee: Optional[int] = None

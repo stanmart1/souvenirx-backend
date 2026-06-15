@@ -28,6 +28,7 @@ from app.schemas.payment import (
     OrderStatusUpdate,
     BankTransferVerify,
     AffiliatePayoutRequest,
+    DeliveryZoneCreate,
     DeliveryZoneUpdate,
     BankAccountCreate,
     BankAccountUpdate,
@@ -44,7 +45,7 @@ __all__ = [
     "ReviewCreate",
     "CartItemAdd", "CartItemUpdate", "OrderCreate",
     "PaymentInitialize", "PromoValidate", "OrderStatusUpdate",
-    "BankTransferVerify", "AffiliatePayoutRequest", "DeliveryZoneUpdate",
+    "BankTransferVerify", "AffiliatePayoutRequest", "DeliveryZoneCreate", "DeliveryZoneUpdate",
     "BankAccountCreate", "BankAccountUpdate", "PromoCreate", "PromoUpdate",
     "AffiliateUpdate",
 ]

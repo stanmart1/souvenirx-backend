@@ -35,6 +35,7 @@ from app.schemas.payment import (
     BankTransferVerify,
     AffiliatePayoutRequest,
     AffiliateUpdate,
+    DeliveryZoneCreate,
     DeliveryZoneUpdate,
     BankAccountCreate,
     BankAccountUpdate,
@@ -1245,27 +1246,27 @@ async def list_zones(admin: User = Depends(get_current_admin), db: AsyncSession 
 
 
 @router.post("/delivery-zones")
-async def create_zone(
-    zone_name: str,
-    countries: list[str],
-    states: list[str],
-    lgas: list[str],
-    zone_type: str,
-    standard_fee: int,
-    express_fee: int,
-    eta_text: str,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
+async def create_zone(body: DeliveryZoneCreate, admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     zone = DeliveryZone(
-        zone_name=zone_name,
-        countries=countries,
-        states=states,
-        lgas=lgas,
-        zone_type=zone_type,
-        standard_fee=standard_fee,
-        express_fee=express_fee,
-        eta_text=eta_text,
+        zone_name=body.zone_name,
+        countries=body.countries,
+        states=body.states,
+        lgas=body.lgas,
+        zone_type=body.zone_type,
+        standard_fee=body.standard_fee,
+        express_fee=body.express_fee,
+        eta_text=body.eta_text,
+        is_active=body.is_active,
+        free_shipping_threshold=body.free_shipping_threshold,
+        weight_fee_per_kg=body.weight_fee_per_kg,
+        volume_fee_per_unit=body.volume_fee_per_unit,
+        min_days=body.min_days,
+        max_days=body.max_days,
+        is_international=body.is_international,
+        customs_handling_fee=body.customs_handling_fee,
+        border_crossing_fee=body.border_crossing_fee,
+        default_carrier=body.default_carrier,
+        auto_assign=body.auto_assign,
     )
     db.add(zone)
     await db.flush()
