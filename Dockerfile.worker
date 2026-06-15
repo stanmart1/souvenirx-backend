@@ -11,17 +11,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
+# ---------------------------------------------------------------------------
+# Runtime image
+# ---------------------------------------------------------------------------
 FROM python:3.12-slim
 
 WORKDIR /app
 
+# tini: minimal init that forwards signals (SIGTERM/SIGINT) to the worker
+# process correctly so arq can shut down gracefully.
+# ca-certificates: required for TLS connections (Redis SSL, outbound HTTPS).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local
 
-ENV PYTHONPATH=/app
+# PYTHONUNBUFFERED: flush stdout/stderr immediately so logs appear in
+#   container output without buffering (critical for debugging crashes).
+# PYTHONDONTWRITEBYTECODE: skip .pyc generation inside a container.
+# PYTHONPATH: ensure the app package resolves correctly.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
 
 COPY . .
 
@@ -33,4 +46,6 @@ RUN adduser --disabled-password --gecos '' appuser && \
 
 USER appuser
 
+# Use tini as PID 1 so SIGTERM is properly forwarded to arq
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/app/start_worker.sh"]

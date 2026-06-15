@@ -10,6 +10,15 @@ def build_redis_ssl_context() -> Optional[ssl.SSLContext]:
     """Build an SSL context for Redis connections.
 
     Returns None when the Redis URL is not rediss://.
+
+    Python 3.12 note: ssl.create_default_context() uses PROTOCOL_TLS_CLIENT
+    which bakes in check_hostname=True and CERT_REQUIRED.  Changing verify_mode
+    to CERT_NONE on that context is unreliable across builds.  For the
+    no-verification (self-signed cert) path we start with a fresh
+    SSLContext(PROTOCOL_TLS_CLIENT) and disable both flags explicitly.
+
+    To allow self-signed certificates set:
+        REDIS_SSL_CERT_REQS=none
     """
     if not settings.redis_url.startswith("rediss://"):
         return None
@@ -21,17 +30,27 @@ def build_redis_ssl_context() -> Optional[ssl.SSLContext]:
     }
     cert_reqs = cert_reqs_map.get(settings.redis_ssl_cert_reqs.lower(), ssl.CERT_REQUIRED)
 
+    if cert_reqs == ssl.CERT_NONE:
+        # Self-signed / no-verification path.
+        # check_hostname must be disabled BEFORE changing verify_mode.
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        if settings.redis_ssl_certfile:
+            ctx.load_cert_chain(
+                certfile=settings.redis_ssl_certfile,
+                keyfile=settings.redis_ssl_keyfile or None,
+            )
+        return ctx
+
+    # Verified / optional path — use the hardened default context.
     ctx = ssl.create_default_context()
-    ctx.check_hostname = cert_reqs == ssl.CERT_REQUIRED
-    ctx.verify_mode = cert_reqs
+    if cert_reqs == ssl.CERT_OPTIONAL:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_OPTIONAL
 
     if settings.redis_ssl_ca_certs:
         ctx.load_verify_locations(settings.redis_ssl_ca_certs)
-    elif cert_reqs != ssl.CERT_NONE:
-        try:
-            ctx.load_default_certs()
-        except Exception:
-            pass
 
     if settings.redis_ssl_certfile:
         ctx.load_cert_chain(
