@@ -1137,6 +1137,138 @@ async def process_return(
     return {"message": f"Return request processed for order {order_number}"}
 
 
+@router.post("/orders/bulk-update-status")
+async def bulk_update_order_status(
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    order_numbers = body.get("order_numbers", [])
+    new_status = body.get("status")
+    
+    if not order_numbers:
+        raise HTTPException(status_code=400, detail="No order numbers provided")
+    if not new_status:
+        raise HTTPException(status_code=400, detail="Status is required")
+    
+    # Validate status
+    valid_statuses = [s.value for s in OrderStatus]
+    if new_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+    
+    result = await db.execute(
+        select(Order).where(Order.order_number.in_([on.upper() for on in order_numbers]))
+    )
+    orders = result.scalars().all()
+    
+    for order in orders:
+        order.status = new_status
+        # Add tracking event
+        db.add(OrderTracking(
+            order_id=order.id,
+            status=new_status,
+            description=f"Bulk status update by admin to {new_status}"
+        ))
+    
+    await db.flush()
+    return {"message": f"Updated {len(orders)} orders to {new_status}"}
+
+
+@router.get("/orders/{order_number}/invoice")
+async def generate_invoice(
+    order_number: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate invoice data for an order.
+    Frontend will handle PDF generation or printing.
+    """
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(Order)
+        .where(Order.order_number == order_number.upper())
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.user)
+        )
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    return {
+        "order_number": order.order_number,
+        "order_date": order.created_at.isoformat(),
+        "status": order.status,
+        "payment_status": order.payment_status,
+        "customer": {
+            "name": order.user.full_name,
+            "email": order.user.email,
+            "phone": order.user.phone,
+        },
+        "shipping_address": order.shipping_address,
+        "items": [
+            {
+                "product_name": item.product_name,
+                "qty": item.qty,
+                "unit_price": item.unit_price,
+                "total": item.qty * item.unit_price,
+            }
+            for item in order.items
+        ],
+        "subtotal": order.subtotal,
+        "shipping_fee": order.shipping_fee,
+        "total": order.total,
+        "notes": order.notes,
+    }
+
+
+@router.get("/orders/{order_number}/packing-slip")
+async def generate_packing_slip(
+    order_number: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate packing slip data for an order.
+    Frontend will handle PDF generation or printing.
+    """
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(Order)
+        .where(Order.order_number == order_number.upper())
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.user)
+        )
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    return {
+        "order_number": order.order_number,
+        "order_date": order.created_at.isoformat(),
+        "customer": {
+            "name": order.user.full_name,
+            "phone": order.user.phone,
+        },
+        "shipping_address": order.shipping_address,
+        "items": [
+            {
+                "product_name": item.product_name,
+                "qty": item.qty,
+                "sku": item.variant_id or "N/A",
+            }
+            for item in order.items
+        ],
+        "notes": order.notes,
+    }
+
+
 # --- Customers ---
 @router.get("/customers")
 async def list_customers(
