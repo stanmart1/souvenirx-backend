@@ -1440,6 +1440,184 @@ async def get_customer_detail(
     }
 
 
+@router.patch("/customers/{customer_id}")
+async def update_customer(
+    customer_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update customer information"""
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+    )
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Update allowed fields
+    if "full_name" in body:
+        customer.full_name = body["full_name"]
+    if "email" in body:
+        # Check if email is already taken
+        existing = await db.execute(
+            select(User).where(User.email == body["email"], User.id != customer.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already in use")
+        customer.email = body["email"]
+    if "phone" in body:
+        customer.phone = body["phone"]
+    if "is_active" in body:
+        customer.is_active = body["is_active"]
+    
+    await db.flush()
+    return {"message": "Customer updated", "id": str(customer.id)}
+
+
+@router.get("/customers/{customer_id}/notes")
+async def get_customer_notes(
+    customer_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all notes for a customer"""
+    from app.models.customer_note import CustomerNote
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(CustomerNote)
+        .where(CustomerNote.customer_id == uuid.UUID(customer_id))
+        .options(selectinload(CustomerNote.admin))
+        .order_by(CustomerNote.created_at.desc())
+    )
+    notes = result.scalars().all()
+    
+    return {
+        "notes": [
+            {
+                "id": note.id,
+                "note": note.note,
+                "admin_name": note.admin.full_name if note.admin else "System",
+                "created_at": note.created_at.isoformat(),
+            }
+            for note in notes
+        ]
+    }
+
+
+@router.post("/customers/{customer_id}/notes")
+async def add_customer_note(
+    customer_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a note to a customer"""
+    from app.models.customer_note import CustomerNote
+    
+    # Verify customer exists
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    note_text = body.get("note")
+    if not note_text:
+        raise HTTPException(status_code=400, detail="Note text is required")
+    
+    note = CustomerNote(
+        customer_id=uuid.UUID(customer_id),
+        admin_id=admin.id,
+        note=note_text,
+    )
+    db.add(note)
+    await db.flush()
+    
+    return {"message": "Note added", "id": note.id}
+
+
+@router.delete("/customers/{customer_id}/notes/{note_id}")
+async def delete_customer_note(
+    customer_id: str,
+    note_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a customer note"""
+    from app.models.customer_note import CustomerNote
+    
+    result = await db.execute(
+        select(CustomerNote).where(
+            CustomerNote.id == note_id,
+            CustomerNote.customer_id == uuid.UUID(customer_id)
+        )
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    await db.delete(note)
+    await db.flush()
+    return {"message": "Note deleted"}
+
+
+@router.get("/customers/{customer_id}/ltv")
+async def calculate_customer_ltv(
+    customer_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Calculate customer lifetime value and metrics"""
+    from sqlalchemy import func
+    from datetime import timedelta
+    
+    customer_uuid = uuid.UUID(customer_id)
+    
+    # Verify customer exists
+    result = await db.execute(
+        select(User).where(User.id == customer_uuid, User.role == UserRole.customer.value)
+    )
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Get all successful orders
+    orders_result = await db.execute(
+        select(Order)
+        .where(Order.user_id == customer_uuid, Order.payment_status == PaymentStatus.success.value)
+        .order_by(Order.created_at)
+    )
+    orders = orders_result.scalars().all()
+    
+    if not orders:
+        return {
+            "ltv": 0,
+            "total_orders": 0,
+            "avg_order_value": 0,
+            "first_order_date": None,
+            "last_order_date": None,
+            "customer_lifetime_days": 0,
+            "purchase_frequency": 0,
+        }
+    
+    total_spent = sum(o.total for o in orders)
+    first_order = orders[0]
+    last_order = orders[-1]
+    lifetime_days = (datetime.now(timezone.utc) - first_order.created_at).days
+    
+    return {
+        "ltv": total_spent,
+        "total_orders": len(orders),
+        "avg_order_value": int(total_spent / len(orders)),
+        "first_order_date": first_order.created_at.isoformat(),
+        "last_order_date": last_order.created_at.isoformat(),
+        "customer_lifetime_days": lifetime_days,
+        "purchase_frequency": len(orders) / max(lifetime_days / 30, 1),  # orders per month
+    }
+
+
 # --- Affiliates ---
 @router.get("/affiliates")
 async def list_affiliates(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
