@@ -2160,6 +2160,88 @@ async def delete_bank_account(account_id: int, admin: User = Depends(get_current
     return {"message": "Bank account deactivated"}
 
 
+@router.get("/bank-accounts/nigerian-banks")
+async def get_nigerian_banks(admin: User = Depends(get_current_admin)):
+    """Get list of Nigerian banks for dropdown"""
+    # Common Nigerian banks with their Paystack codes
+    banks = [
+        {"name": "Access Bank", "code": "044"},
+        {"name": "Citibank Nigeria", "code": "023"},
+        {"name": "Ecobank Nigeria", "code": "050"},
+        {"name": "Fidelity Bank", "code": "070"},
+        {"name": "First Bank of Nigeria", "code": "011"},
+        {"name": "First City Monument Bank", "code": "214"},
+        {"name": "Guaranty Trust Bank", "code": "058"},
+        {"name": "Heritage Bank", "code": "030"},
+        {"name": "Keystone Bank", "code": "082"},
+        {"name": "Polaris Bank", "code": "076"},
+        {"name": "Providus Bank", "code": "101"},
+        {"name": "Stanbic IBTC Bank", "code": "221"},
+        {"name": "Standard Chartered Bank", "code": "068"},
+        {"name": "Sterling Bank", "code": "232"},
+        {"name": "Union Bank of Nigeria", "code": "032"},
+        {"name": "United Bank for Africa", "code": "033"},
+        {"name": "Unity Bank", "code": "215"},
+        {"name": "Wema Bank", "code": "035"},
+        {"name": "Zenith Bank", "code": "057"},
+    ]
+    return {"banks": banks}
+
+
+@router.post("/bank-accounts/{account_id}/verify")
+async def verify_bank_account(
+    account_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify bank account with Paystack"""
+    result = await db.execute(select(BankAccount).where(BankAccount.id == account_id))
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Bank account not found")
+    
+    # TODO: Integrate with Paystack API for real verification
+    # For now, just validate format
+    if not account.account_number or len(account.account_number) != 10:
+        raise HTTPException(status_code=400, detail="Invalid account number format (must be 10 digits)")
+    
+    if not account.bank_code:
+        raise HTTPException(status_code=400, detail="Bank code required for verification")
+    
+    # Mock verification - in production, call Paystack API
+    account.is_verified = True
+    await db.flush()
+    
+    return {
+        "message": "Account verified successfully",
+        "account_name": account.account_name,
+        "is_verified": True,
+    }
+
+
+@router.post("/bank-accounts/reorder")
+async def reorder_bank_accounts(
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reorder bank accounts (drag-drop sort)"""
+    account_ids = body.get("account_ids", [])
+    
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="account_ids required")
+    
+    # Update sort_order for each account
+    for index, account_id in enumerate(account_ids):
+        result = await db.execute(select(BankAccount).where(BankAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account:
+            account.sort_order = index
+    
+    await db.flush()
+    return {"message": "Bank accounts reordered"}
+
+
 # --- Promo Codes ---
 @router.get("/promos")
 async def list_promos(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
