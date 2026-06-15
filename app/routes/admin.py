@@ -50,6 +50,7 @@ router = APIRouter()
 async def dashboard_stats(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     from datetime import timedelta
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
 
     # Revenue (30 days)
     revenue_result = await db.execute(
@@ -58,15 +59,49 @@ async def dashboard_stats(admin: User = Depends(get_current_admin), db: AsyncSes
     )
     revenue = revenue_result.scalar()
 
+    # Revenue (previous 30 days for trend)
+    revenue_prev_result = await db.execute(
+        select(func.coalesce(func.sum(Order.total), 0))
+        .where(Order.payment_status == PaymentStatus.success, Order.created_at >= sixty_days_ago, Order.created_at < thirty_days_ago)
+    )
+    revenue_prev = revenue_prev_result.scalar()
+
+    # Calculate revenue trend
+    revenue_trend = 0
+    if revenue_prev > 0:
+        revenue_trend = round(((revenue - revenue_prev) / revenue_prev) * 100, 1)
+
     # Orders count (30 days)
     orders_result = await db.execute(
         select(func.count()).where(Order.created_at >= thirty_days_ago)
     )
     total_orders = orders_result.scalar()
 
+    # Orders count (previous 30 days for trend)
+    orders_prev_result = await db.execute(
+        select(func.count()).where(Order.created_at >= sixty_days_ago, Order.created_at < thirty_days_ago)
+    )
+    total_orders_prev = orders_prev_result.scalar()
+
+    # Calculate orders trend
+    orders_trend = 0
+    if total_orders_prev > 0:
+        orders_trend = round(((total_orders - total_orders_prev) / total_orders_prev) * 100, 1)
+
     # Customers count (all time)
     customers_result = await db.execute(select(func.count()).where(User.role == UserRole.customer.value))
     total_customers = customers_result.scalar()
+
+    # Customers count (previous 30 days for trend)
+    customers_prev_result = await db.execute(
+        select(func.count()).where(User.role == UserRole.customer.value, User.created_at >= sixty_days_ago, User.created_at < thirty_days_ago)
+    )
+    total_customers_prev = customers_prev_result.scalar()
+
+    # Calculate customers trend
+    customers_trend = 0
+    if total_customers_prev > 0:
+        customers_trend = round(((total_customers - total_customers_prev) / total_customers_prev) * 100, 1)
 
     # Avg order value (30 days)
     avg_result = await db.execute(
@@ -75,11 +110,27 @@ async def dashboard_stats(admin: User = Depends(get_current_admin), db: AsyncSes
     )
     avg_order = avg_result.scalar()
 
+    # Avg order value (previous 30 days for trend)
+    avg_prev_result = await db.execute(
+        select(func.coalesce(func.avg(Order.total), 0))
+        .where(Order.payment_status == PaymentStatus.success, Order.created_at >= sixty_days_ago, Order.created_at < thirty_days_ago)
+    )
+    avg_order_prev = avg_prev_result.scalar()
+
+    # Calculate avg order trend
+    avg_order_trend = 0
+    if avg_order_prev > 0:
+        avg_order_trend = round(((avg_order - avg_order_prev) / avg_order_prev) * 100, 1)
+
     return {
         "revenue": revenue,
+        "revenue_trend": revenue_trend,
         "orders": total_orders,
+        "orders_trend": orders_trend,
         "customers": total_customers,
+        "customers_trend": customers_trend,
         "avg_order_value": int(avg_order),
+        "avg_order_trend": avg_order_trend,
     }
 
 

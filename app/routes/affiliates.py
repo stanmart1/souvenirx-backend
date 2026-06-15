@@ -1,5 +1,6 @@
 import uuid
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select, func
@@ -49,6 +50,10 @@ async def register_affiliate(user: User = Depends(get_current_user), db: AsyncSe
 
 @router.get("/me")
 async def get_affiliate_stats(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from datetime import timedelta
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
+
     result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
     affiliate = result.scalar_one_or_none()
     if not affiliate:
@@ -60,11 +65,66 @@ async def get_affiliate_stats(user: User = Depends(get_current_user), db: AsyncS
     )
     total_clicks = clicks_result.scalar()
 
+    # Count clicks (previous 30 days for trend)
+    clicks_prev_result = await db.execute(
+        select(func.count()).where(
+            AffiliateClick.affiliate_id == affiliate.id,
+            AffiliateClick.created_at >= sixty_days_ago,
+            AffiliateClick.created_at < thirty_days_ago
+        )
+    )
+    total_clicks_prev = clicks_prev_result.scalar()
+
+    # Calculate clicks trend
+    clicks_trend = 0
+    if total_clicks_prev > 0:
+        clicks_trend = round(((total_clicks - total_clicks_prev) / total_clicks_prev) * 100, 1)
+
     # Count conversions
     conv_result = await db.execute(
         select(func.count()).where(AffiliateConversion.affiliate_id == affiliate.id)
     )
     total_conversions = conv_result.scalar()
+
+    # Count conversions (previous 30 days for trend)
+    conv_prev_result = await db.execute(
+        select(func.count()).where(
+            AffiliateConversion.affiliate_id == affiliate.id,
+            AffiliateConversion.created_at >= sixty_days_ago,
+            AffiliateConversion.created_at < thirty_days_ago
+        )
+    )
+    total_conversions_prev = conv_prev_result.scalar()
+
+    # Calculate conversions trend
+    conversions_trend = 0
+    if total_conversions_prev > 0:
+        conversions_trend = round(((total_conversions - total_conversions_prev) / total_conversions_prev) * 100, 1)
+
+    # Calculate earnings trend
+    earnings_result = await db.execute(
+        select(func.coalesce(func.sum(AffiliateConversion.commission_amount), 0))
+        .where(
+            AffiliateConversion.affiliate_id == affiliate.id,
+            AffiliateConversion.created_at >= thirty_days_ago
+        )
+    )
+    recent_earnings = earnings_result.scalar()
+
+    earnings_prev_result = await db.execute(
+        select(func.coalesce(func.sum(AffiliateConversion.commission_amount), 0))
+        .where(
+            AffiliateConversion.affiliate_id == affiliate.id,
+            AffiliateConversion.created_at >= sixty_days_ago,
+            AffiliateConversion.created_at < thirty_days_ago
+        )
+    )
+    recent_earnings_prev = earnings_prev_result.scalar()
+
+    # Calculate earnings trend
+    earnings_trend = 0
+    if recent_earnings_prev > 0:
+        earnings_trend = round(((recent_earnings - recent_earnings_prev) / recent_earnings_prev) * 100, 1)
 
     return {
         "id": str(affiliate.id),
@@ -72,8 +132,11 @@ async def get_affiliate_stats(user: User = Depends(get_current_user), db: AsyncS
         "status": affiliate.status,
         "commission_rate": affiliate.commission_rate,
         "total_earnings": affiliate.total_earnings,
+        "earnings_trend": earnings_trend,
         "clicks": total_clicks,
+        "clicks_trend": clicks_trend,
         "conversions": total_conversions,
+        "conversions_trend": conversions_trend,
         "cookie_days": affiliate.cookie_days,
         "bank_name": affiliate.bank_name,
         "account_number": affiliate.account_number,
