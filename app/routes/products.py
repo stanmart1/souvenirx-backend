@@ -165,6 +165,55 @@ async def list_products(
     }
 
 
+@router.get("/ads")
+async def get_public_ads(
+    position: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint to fetch active ads with caching."""
+    from app.redis import cache_get, cache_set
+    from datetime import datetime, timezone
+
+    cache_key = f"ads:{position or 'all'}"
+
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    now = datetime.now(timezone.utc)
+
+    query = select(Ad).where(Ad.is_active == True)
+    if position:
+        query = query.where(Ad.position == position)
+
+    query = query.where(
+        (Ad.start_date.is_(None)) | (Ad.start_date <= now)
+    )
+    query = query.where(
+        (Ad.end_date.is_(None)) | (Ad.end_date >= now)
+    )
+
+    query = query.order_by(Ad.sort_order, Ad.created_at.desc())
+    result = await db.execute(query)
+    ads = result.scalars().all()
+
+    response = [
+        {
+            "id": ad.id,
+            "title": ad.title,
+            "description": ad.description,
+            "imageUrl": ad.image_url,
+            "mobileImageUrl": ad.mobile_image_url,
+            "linkUrl": ad.link_url,
+            "position": ad.position,
+        }
+        for ad in ads
+    ]
+
+    await cache_set(cache_key, response, ex=300)
+    return response
+
+
 @router.get("/{slug}/related")
 async def related_products(
     slug: str,
@@ -319,55 +368,6 @@ async def submit_review(
         await invalidate_product_cache(product.slug)
     
     return {"id": str(review.id), "message": "Review submitted"}
-
-
-@router.get("/ads")
-async def get_public_ads(
-    position: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """Public endpoint to fetch active ads with caching."""
-    from app.redis import cache_get, cache_set
-    from datetime import datetime, timezone
-
-    cache_key = f"ads:{position or 'all'}"
-
-    cached = await cache_get(cache_key)
-    if cached is not None:
-        return cached
-
-    now = datetime.now(timezone.utc)
-
-    query = select(Ad).where(Ad.is_active == True)
-    if position:
-        query = query.where(Ad.position == position)
-
-    query = query.where(
-        (Ad.start_date.is_(None)) | (Ad.start_date <= now)
-    )
-    query = query.where(
-        (Ad.end_date.is_(None)) | (Ad.end_date >= now)
-    )
-
-    query = query.order_by(Ad.sort_order, Ad.created_at.desc())
-    result = await db.execute(query)
-    ads = result.scalars().all()
-
-    response = [
-        {
-            "id": ad.id,
-            "title": ad.title,
-            "description": ad.description,
-            "imageUrl": ad.image_url,
-            "mobileImageUrl": ad.mobile_image_url,
-            "linkUrl": ad.link_url,
-            "position": ad.position,
-        }
-        for ad in ads
-    ]
-
-    await cache_set(cache_key, response, ex=300)
-    return response
 
 
 def _product_response(p: Product, include_category: bool = False) -> dict:

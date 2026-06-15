@@ -81,12 +81,13 @@ async def seed():
 
         # --- Categories ---
         categories_data = [
-            ("mugs", "Custom Mugs", "☕", 1),
-            ("tshirts", "Branded T-Shirts", "👕", 2),
-            ("tote-bags", "Tote Bags", "👜", 3),
-            ("plaques", "Engraved Plaques", "🏆", 4),
-            ("cards", "Greeting Cards", "💌", 5),
-            ("wristbands", "Wristbands", "📿", 6),
+            # icon values are Lucide React icon component names rendered by the frontend
+            ("mugs",       "Custom Mugs",      "Coffee",      1),
+            ("tshirts",    "Branded T-Shirts",  "Shirt",       2),
+            ("tote-bags",  "Tote Bags",         "ShoppingBag", 3),
+            ("plaques",    "Engraved Plaques",  "Award",       4),
+            ("cards",      "Greeting Cards",    "Mail",        5),
+            ("wristbands", "Wristbands",        "Watch",       6),
         ]
         cat_map = {}
         for slug, name, icon, sort in categories_data:
