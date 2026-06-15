@@ -1,35 +1,15 @@
 import logging
-from urllib.parse import urlparse
+import atexit
 
-import ssl as ssl_module
 from arq import create_pool
-from arq.connections import RedisSettings
 
-from app.config import settings
+from app.tasks.redis_config import get_redis_settings
 
 logger = logging.getLogger("souvenirx.queue")
 
 
-def _redis_settings_from_url() -> RedisSettings:
-    parsed = urlparse(settings.redis_url)
-    database = int(parsed.path.lstrip("/")) if parsed.path and parsed.path != "/" else 0
-    use_ssl = parsed.scheme == "rediss"
-    ssl_ctx = None
-    if use_ssl:
-        ssl_ctx = ssl_module.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl_module.CERT_NONE
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=database,
-        password=parsed.password,
-        ssl=ssl_ctx,
-    )
-
-
 async def get_arq_pool():
-    redis_settings = _redis_settings_from_url()
+    redis_settings = get_redis_settings()
     return await create_pool(redis_settings)
 
 
@@ -43,3 +23,28 @@ async def enqueue(func_name: str, **kwargs):
         logger.info("ARQ pool created for enqueuing jobs")
     await _pool.enqueue_job(func_name, **kwargs)
     logger.debug("Enqueued job %s with kwargs=%s", func_name, kwargs)
+
+
+async def close_arq_pool():
+    """Close the ARQ pool gracefully."""
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        logger.info("ARQ pool closed")
+        _pool = None
+
+
+def _sync_close_pool():
+    """Synchronous wrapper for atexit hook."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(close_arq_pool())
+        else:
+            loop.run_until_complete(close_arq_pool())
+    except Exception as e:
+        logger.warning("Failed to close ARQ pool on exit: %s", e)
+
+
+atexit.register(_sync_close_pool)

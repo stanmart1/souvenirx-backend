@@ -2,12 +2,14 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, exists
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import async_session
 from app.models.settings import CartRecovery
 from app.models.cart import CartItem
 from app.models.user import User
+from app.models.order import Order
 from app.services.email import send_cart_recovery_email
 from app.services.sms import send_cart_recovery_sms
 
@@ -15,18 +17,30 @@ logger = logging.getLogger("souvenirx.tasks.cart_recovery")
 
 
 async def check_abandoned_carts(ctx: dict) -> None:
-    """Check for abandoned carts and send recovery emails."""
+    """Check for abandoned carts and send recovery emails.
+    
+    Only processes carts that haven't been converted to orders.
+    Raises exceptions to allow ARQ retry mechanism to work.
+    """
     async with async_session() as db:
-        try:
-            abandoned_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+        abandoned_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
 
-            result = await db.execute(
-                select(CartItem.user_id)
-                .distinct()
-                .where(CartItem.created_at < abandoned_threshold)
+        result = await db.execute(
+            select(CartItem.user_id)
+            .distinct()
+            .where(CartItem.created_at < abandoned_threshold)
+            .where(
+                ~exists(
+                    select(1)
+                    .select_from(Order)
+                    .where(Order.user_id == CartItem.user_id)
+                    .where(Order.created_at >= CartItem.created_at)
+                )
             )
-            user_ids = [row[0] for row in result.all()]
+        )
+        user_ids = [row[0] for row in result.all()]
 
+        try:
             for user_id in user_ids:
                 recovery_result = await db.execute(
                     select(CartRecovery).where(CartRecovery.user_id == user_id)
@@ -73,6 +87,11 @@ async def check_abandoned_carts(ctx: dict) -> None:
             await db.commit()
             logger.info("Processed %d abandoned carts", len(user_ids))
 
-        except Exception as e:
-            logger.error("Cart recovery error: %s", e, exc_info=True)
+        except SQLAlchemyError as e:
+            logger.error("Database error in cart recovery: %s", e, exc_info=True)
             await db.rollback()
+            raise
+        except Exception as e:
+            logger.error("Unexpected error in cart recovery: %s", e, exc_info=True)
+            await db.rollback()
+            raise
