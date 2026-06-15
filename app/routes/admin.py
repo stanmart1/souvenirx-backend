@@ -1930,6 +1930,96 @@ async def get_all_payouts(
     }
 
 
+@router.patch("/affiliates/{affiliate_id}/commission-rate")
+async def update_commission_rate(
+    affiliate_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update commission rate for a specific affiliate"""
+    result = await db.execute(select(Affiliate).where(Affiliate.id == uuid.UUID(affiliate_id)))
+    affiliate = result.scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="Affiliate not found")
+    
+    commission_rate = body.get("commission_rate")
+    if commission_rate is None or commission_rate < 0 or commission_rate > 1:
+        raise HTTPException(status_code=400, detail="Commission rate must be between 0 and 1")
+    
+    affiliate.commission_rate = commission_rate
+    await db.flush()
+    
+    return {"message": "Commission rate updated", "commission_rate": commission_rate}
+
+
+@router.get("/affiliates/{affiliate_id}/referral-link")
+async def generate_referral_link(
+    affiliate_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate referral link for an affiliate"""
+    result = await db.execute(select(Affiliate).where(Affiliate.id == uuid.UUID(affiliate_id)))
+    affiliate = result.scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="Affiliate not found")
+    
+    # Get base URL from settings or environment
+    base_url = "https://souvenirx.com"  # TODO: Get from settings
+    referral_link = f"{base_url}?ref={affiliate.referral_code}"
+    
+    return {
+        "referral_code": affiliate.referral_code,
+        "referral_link": referral_link,
+        "short_link": f"{base_url}/r/{affiliate.referral_code}",
+    }
+
+
+@router.get("/affiliates/leaderboard")
+async def get_affiliate_leaderboard(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get affiliate performance leaderboard"""
+    from sqlalchemy import func
+    from sqlalchemy.orm import selectinload
+    
+    # Get affiliates with their stats
+    result = await db.execute(
+        select(
+            Affiliate,
+            func.count(AffiliateClick.id).label("total_clicks"),
+            func.count(AffiliateConversion.id).label("total_conversions"),
+        )
+        .outerjoin(AffiliateClick, AffiliateClick.affiliate_id == Affiliate.id)
+        .outerjoin(AffiliateConversion, AffiliateConversion.affiliate_id == Affiliate.id)
+        .options(selectinload(Affiliate.user))
+        .group_by(Affiliate.id)
+        .order_by(Affiliate.total_earnings.desc())
+        .limit(50)
+    )
+    affiliates_data = result.all()
+    
+    leaderboard = []
+    for idx, (affiliate, total_clicks, total_conversions) in enumerate(affiliates_data, 1):
+        conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0
+        
+        leaderboard.append({
+            "rank": idx,
+            "id": str(affiliate.id),
+            "name": affiliate.user.full_name if affiliate.user else "Unknown",
+            "referral_code": affiliate.referral_code,
+            "total_earnings": affiliate.total_earnings,
+            "total_clicks": total_clicks,
+            "total_conversions": total_conversions,
+            "conversion_rate": round(conversion_rate, 2),
+            "commission_rate": affiliate.commission_rate,
+        })
+    
+    return {"leaderboard": leaderboard}
+
+
 # --- Delivery Zones ---
 @router.get("/delivery-zones")
 async def list_zones(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
