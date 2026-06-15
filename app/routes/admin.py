@@ -3142,3 +3142,62 @@ async def delete_ad(
     await cache_delete("ads:all", f"ads:{ad.position}")
 
     return {"message": "Ad deleted successfully"}
+
+
+@router.get("/ads/{ad_id}/analytics")
+async def get_ad_analytics(
+    ad_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get analytics for an ad"""
+    result = await db.execute(select(Ad).where(Ad.id == ad_id))
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    
+    ctr = (ad.clicks / ad.impressions * 100) if ad.impressions > 0 else 0
+    
+    return {
+        "id": ad.id,
+        "title": ad.title,
+        "impressions": ad.impressions,
+        "clicks": ad.clicks,
+        "ctr": round(ctr, 2),
+        "variant": ad.variant,
+        "is_active": ad.is_active,
+        "start_date": ad.start_date.isoformat() if ad.start_date else None,
+        "end_date": ad.end_date.isoformat() if ad.end_date else None,
+    }
+
+
+@router.post("/ads/{ad_id}/track-impression")
+async def track_ad_impression(
+    ad_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Track ad impression (public endpoint)"""
+    result = await db.execute(select(Ad).where(Ad.id == ad_id))
+    ad = result.scalar_one_or_none()
+    if not ad:
+        return {"message": "Ad not found"}
+    
+    ad.impressions += 1
+    await db.flush()
+    return {"message": "Impression tracked"}
+
+
+@router.post("/ads/{ad_id}/track-click")
+async def track_ad_click(
+    ad_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Track ad click (public endpoint)"""
+    result = await db.execute(select(Ad).where(Ad.id == ad_id))
+    ad = result.scalar_one_or_none()
+    if not ad:
+        return {"message": "Ad not found"}
+    
+    ad.clicks += 1
+    await db.flush()
+    return {"message": "Click tracked"}
