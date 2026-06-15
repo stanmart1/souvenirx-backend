@@ -55,6 +55,7 @@ app.mount("/uploads", StaticFiles(directory=str(upload_dir)), name="uploads")
 from app.routes.auth import router as auth_router
 from app.routes.products import router as products_router
 from app.routes.cart import router as cart_router
+from app.routes.wishlist import router as wishlist_router
 from app.routes.orders import router as orders_router
 from app.routes.payments import router as payments_router
 from app.routes.delivery import router as delivery_router
@@ -77,6 +78,7 @@ from app.routes.auth_oauth import router as oauth_router
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
 app.include_router(products_router, prefix="/api/products", tags=["Products"])
 app.include_router(cart_router, prefix="/api/cart", tags=["Cart"])
+app.include_router(wishlist_router, prefix="/api/wishlist", tags=["Wishlist"])
 app.include_router(orders_router, prefix="/api/orders", tags=["Orders"])
 app.include_router(payments_router, prefix="/api/payments", tags=["Payments"])
 app.include_router(delivery_router, prefix="/api/delivery-zones", tags=["Delivery"])

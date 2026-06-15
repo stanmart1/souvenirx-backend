@@ -7,6 +7,7 @@ from app.models.delivery import DeliveryZone, ShippingMethod, ShippingCarrier, S
 from app.models.promo import PromoCode
 from app.models.bank_account import BankAccount
 from app.models.cart import CartItem
+from app.models.wishlist import WishlistItem
 from app.models.settings import Settings, SystemSettings, HomepageContent, Ad, EmailTemplate, SmsTemplate, CartRecovery
 from app.models.logo_upload import LogoUpload, LogoUploadStatus
 from app.models.guest_session import GuestSession
@@ -28,6 +29,7 @@ __all__ = [
     "PromoCode",
     "BankAccount",
     "CartItem",
+    "WishlistItem",
     "Settings", "SystemSettings", "HomepageContent", "Ad", "EmailTemplate", "SmsTemplate", "CartRecovery",
     "LogoUpload", "LogoUploadStatus",
     "GuestSession",

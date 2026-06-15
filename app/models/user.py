@@ -35,6 +35,7 @@ class User(Base):
     reviews: Mapped[list["Review"]] = relationship(back_populates="user")
     affiliate: Mapped[Optional["Affiliate"]] = relationship(back_populates="user", uselist=False)
     cart_items: Mapped[list["CartItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    wishlist_items: Mapped[list["WishlistItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Address(Base):
