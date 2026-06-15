@@ -275,3 +275,43 @@ async def admin_reply_ticket(
     ticket.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return {"message": "Reply sent"}
+
+
+@router.post("/admin/tickets/{ticket_id}/assign")
+async def assign_ticket(
+    ticket_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign ticket to an admin"""
+    try:
+        ticket_uuid = uuid.UUID(ticket_id)
+        assigned_to_uuid = uuid.UUID(body.get("assigned_to"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID")
+    
+    result = await db.execute(select(SupportTicket).where(SupportTicket.id == ticket_uuid))
+    ticket = result.scalar_one_or_none()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    ticket.assigned_to = assigned_to_uuid
+    ticket.assigned_at = datetime.now(timezone.utc)
+    ticket.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return {"message": "Ticket assigned"}
+
+
+@router.get("/admin/canned-responses")
+async def get_canned_responses(admin: User = Depends(get_current_admin)):
+    """Get list of canned responses"""
+    # Hardcoded for now - could be stored in database
+    responses = [
+        {"id": 1, "title": "Order Status Update", "content": "Thank you for contacting us. Your order is currently being processed and will be shipped within 24-48 hours."},
+        {"id": 2, "title": "Refund Request", "content": "We have received your refund request. Please allow 5-7 business days for the refund to be processed."},
+        {"id": 3, "title": "Product Inquiry", "content": "Thank you for your interest in our products. I'd be happy to help you with any questions you may have."},
+        {"id": 4, "title": "Shipping Delay", "content": "We apologize for the delay in shipping your order. We are working to resolve this issue as quickly as possible."},
+        {"id": 5, "title": "General Thanks", "content": "Thank you for reaching out to us. We appreciate your business and look forward to serving you again."},
+    ]
+    return {"responses": responses}

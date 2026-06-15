@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Enum as SQLEnum, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from enum import Enum
 
@@ -44,6 +44,14 @@ class SupportTicket(Base):
     admin_response = Column(Text, nullable=True)
     admin_responded_at = Column(DateTime(timezone=True), nullable=True)
     admin_responded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    
+    # Assignment
+    assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # SLA tracking
+    sla_due_at = Column(DateTime(timezone=True), nullable=True)
+    sla_breached = Column(Boolean, default=False, nullable=False)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
