@@ -1870,6 +1870,66 @@ async def process_payout(
     return {"message": "Payout processed", "amount": amount}
 
 
+@router.get("/affiliates/{affiliate_id}/payouts")
+async def get_affiliate_payouts(
+    affiliate_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get payout history for an affiliate"""
+    result = await db.execute(
+        select(AffiliatePayout)
+        .where(AffiliatePayout.affiliate_id == uuid.UUID(affiliate_id))
+        .order_by(AffiliatePayout.created_at.desc())
+    )
+    payouts = result.scalars().all()
+    
+    return {
+        "payouts": [
+            {
+                "id": str(p.id),
+                "amount": p.amount,
+                "status": p.status,
+                "created_at": p.created_at.isoformat(),
+                "processed_at": p.processed_at.isoformat() if p.processed_at else None,
+            }
+            for p in payouts
+        ]
+    }
+
+
+@router.get("/affiliates/payouts/all")
+async def get_all_payouts(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all affiliate payouts with affiliate info"""
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(AffiliatePayout)
+        .options(selectinload(AffiliatePayout.affiliate).selectinload(Affiliate.user))
+        .order_by(AffiliatePayout.created_at.desc())
+        .limit(100)
+    )
+    payouts = result.scalars().all()
+    
+    return {
+        "payouts": [
+            {
+                "id": str(p.id),
+                "affiliate_id": str(p.affiliate_id),
+                "affiliate_name": p.affiliate.user.full_name if p.affiliate and p.affiliate.user else "Unknown",
+                "amount": p.amount,
+                "status": p.status,
+                "created_at": p.created_at.isoformat(),
+                "processed_at": p.processed_at.isoformat() if p.processed_at else None,
+            }
+            for p in payouts
+        ]
+    }
+
+
 # --- Delivery Zones ---
 @router.get("/delivery-zones")
 async def list_zones(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
