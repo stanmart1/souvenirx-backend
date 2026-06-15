@@ -46,6 +46,7 @@ class Product(Base):
     moq: Mapped[int] = mapped_column(Integer, nullable=False)
     stock: Mapped[int] = mapped_column(Integer, default=0, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     tags: Mapped[Optional[dict]] = mapped_column(JSONB)
     rating: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     reviews_count: Mapped[int] = mapped_column(Integer, default=0, index=True)

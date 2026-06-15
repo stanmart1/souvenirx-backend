@@ -706,6 +706,180 @@ async def bulk_update_stock(
     return {"message": f"Updated stock for {len(products)} products"}
 
 
+@router.post("/products/{product_id}/archive")
+async def archive_product(product_id: str, admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    product.is_archived = True
+    await db.flush()
+    return {"message": "Product archived"}
+
+
+@router.post("/products/{product_id}/restore")
+async def restore_product(product_id: str, admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    product.is_archived = False
+    await db.flush()
+    return {"message": "Product restored"}
+
+
+@router.post("/products/{product_id}/duplicate")
+async def duplicate_product(product_id: str, admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    from sqlalchemy.orm import selectinload
+    
+    result = await db.execute(
+        select(Product)
+        .where(Product.id == uuid.UUID(product_id))
+        .options(
+            selectinload(Product.images),
+            selectinload(Product.tiers),
+            selectinload(Product.customizations),
+            selectinload(Product.variants)
+        )
+    )
+    original = result.scalar_one_or_none()
+    if not original:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Create duplicate
+    duplicate = Product(
+        slug=f"{original.slug}-copy-{uuid.uuid4().hex[:6]}",
+        name=f"{original.name} (Copy)",
+        category_id=original.category_id,
+        description=original.description,
+        base_price=original.base_price,
+        moq=original.moq,
+        stock=0,  # Start with 0 stock
+        is_active=False,  # Start inactive
+        tags=original.tags,
+        has_variants=original.has_variants,
+    )
+    db.add(duplicate)
+    await db.flush()
+    
+    # Duplicate images
+    for img in original.images:
+        db.add(ProductImage(
+            product_id=duplicate.id,
+            url=img.url,
+            sort_order=img.sort_order,
+        ))
+    
+    # Duplicate tiers
+    for tier in original.tiers:
+        db.add(ProductTier(
+            product_id=duplicate.id,
+            min_qty=tier.min_qty,
+            price=tier.price,
+        ))
+    
+    # Duplicate customizations
+    for custom in original.customizations:
+        db.add(ProductCustomization(
+            product_id=duplicate.id,
+            type=custom.type,
+            label=custom.label,
+            required=custom.required,
+            options=custom.options,
+        ))
+    
+    # Duplicate variants
+    for variant in original.variants:
+        db.add(ProductVariant(
+            product_id=duplicate.id,
+            sku=f"{variant.sku}-copy-{uuid.uuid4().hex[:6]}",
+            attributes=variant.attributes,
+            price=variant.price,
+            moq=variant.moq,
+            stock=0,
+            is_active=False,
+        ))
+    
+    await db.flush()
+    return {"id": str(duplicate.id), "slug": duplicate.slug, "message": "Product duplicated"}
+
+
+@router.post("/products/{product_id}/generate-variants")
+async def generate_variants(
+    product_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate variants from attribute matrix.
+    Body: {
+        "attributes": {
+            "Size": ["S", "M", "L", "XL"],
+            "Color": ["Red", "Blue", "Green"]
+        },
+        "base_price": 10000,
+        "base_moq": 10,
+        "base_stock": 0
+    }
+    """
+    result = await db.execute(select(Product).where(Product.id == uuid.UUID(product_id)))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    attributes = body.get("attributes", {})
+    base_price = body.get("base_price", product.base_price)
+    base_moq = body.get("base_moq", product.moq)
+    base_stock = body.get("base_stock", 0)
+    
+    if not attributes:
+        raise HTTPException(status_code=400, detail="No attributes provided")
+    
+    # Generate all combinations
+    import itertools
+    attr_names = list(attributes.keys())
+    attr_values = [attributes[name] for name in attr_names]
+    combinations = list(itertools.product(*attr_values))
+    
+    created_count = 0
+    for combo in combinations:
+        # Build attribute dict
+        variant_attrs = {attr_names[i]: combo[i] for i in range(len(attr_names))}
+        
+        # Generate SKU
+        sku_parts = [product.slug] + [str(v).lower().replace(" ", "-") for v in combo]
+        sku = "-".join(sku_parts)
+        
+        # Check if variant already exists
+        existing = await db.execute(
+            select(ProductVariant).where(ProductVariant.sku == sku)
+        )
+        if existing.scalar_one_or_none():
+            continue  # Skip if already exists
+        
+        # Create variant
+        variant = ProductVariant(
+            product_id=product.id,
+            sku=sku,
+            attributes=variant_attrs,
+            price=base_price,
+            moq=base_moq,
+            stock=base_stock,
+            is_active=True,
+        )
+        db.add(variant)
+        created_count += 1
+    
+    # Mark product as having variants
+    product.has_variants = True
+    
+    await db.flush()
+    return {"message": f"Generated {created_count} variants", "total_combinations": len(combinations)}
+
+
 # --- Orders ---
 @router.get("/orders")
 async def list_orders(
