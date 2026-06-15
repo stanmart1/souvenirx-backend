@@ -2224,6 +2224,99 @@ async def delete_promo(promo_id: int, admin: User = Depends(get_current_admin), 
     return {"message": "Promo code deactivated"}
 
 
+@router.get("/promos/{promo_id}/analytics")
+async def get_promo_analytics(
+    promo_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get usage analytics for a promo code"""
+    result = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
+    promo = result.scalar_one_or_none()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Promo code not found")
+    
+    return {
+        "code": promo.code,
+        "times_used": promo.current_uses,
+        "max_uses": promo.max_uses,
+        "usage_percentage": (promo.current_uses / promo.max_uses * 100) if promo.max_uses else 0,
+        "total_revenue_impact": promo.total_revenue_impact,
+        "discount_percent": promo.discount_percent,
+        "is_active": promo.is_active,
+        "is_stackable": promo.is_stackable,
+        "created_at": promo.created_at.isoformat(),
+        "expires_at": promo.expires_at.isoformat() if promo.expires_at else None,
+    }
+
+
+@router.post("/promos/{promo_id}/duplicate")
+async def duplicate_promo(
+    promo_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Duplicate an existing promo code"""
+    result = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
+    original = result.scalar_one_or_none()
+    if not original:
+        raise HTTPException(status_code=404, detail="Promo code not found")
+    
+    # Generate new code
+    import random
+    import string
+    new_code = f"{original.code}_COPY_{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+    
+    # Create duplicate
+    duplicate = PromoCode(
+        code=new_code,
+        discount_percent=original.discount_percent,
+        min_order_amount=original.min_order_amount,
+        max_uses=original.max_uses,
+        expires_at=original.expires_at,
+        is_active=False,  # Start as inactive
+        is_stackable=original.is_stackable,
+    )
+    db.add(duplicate)
+    await db.flush()
+    
+    return {
+        "id": duplicate.id,
+        "code": duplicate.code,
+        "message": "Promo code duplicated successfully",
+    }
+
+
+@router.post("/promos/generate-code")
+async def generate_promo_code(
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a random promo code"""
+    import random
+    import string
+    
+    prefix = body.get("prefix", "PROMO")
+    length = body.get("length", 8)
+    
+    if length < 4 or length > 20:
+        raise HTTPException(status_code=400, detail="Length must be between 4 and 20")
+    
+    # Generate random code
+    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+    code = f"{prefix}{random_part}"
+    
+    # Check if code already exists
+    result = await db.execute(select(PromoCode).where(PromoCode.code == code))
+    if result.scalar_one_or_none():
+        # Try again with different random part
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+        code = f"{prefix}{random_part}"
+    
+    return {"code": code}
+
+
 # --- Settings ---
 @router.get("/settings")
 async def get_settings(admin: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):

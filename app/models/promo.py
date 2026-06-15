@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Integer, Boolean, DateTime
+from sqlalchemy import String, Integer, Boolean, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -18,3 +18,6 @@ class PromoCode(Base):
     current_uses: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    total_revenue_impact: Mapped[int] = mapped_column(Integer, default=0)  # Total discount given in kobo
+    is_stackable: Mapped[bool] = mapped_column(Boolean, default=False)  # Can be combined with other promos
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
