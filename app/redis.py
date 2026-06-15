@@ -7,18 +7,14 @@ from app.config import settings
 
 
 def build_redis_ssl_context() -> Optional[ssl.SSLContext]:
-    """Build an SSL context for Redis connections.
+    """Build an SSLContext for Redis connections.
+
+    Retained for backward compatibility / testing.  The live connection
+    client (redis_client below) uses _build_redis_kwargs() which passes
+    the individual ssl_* params to aioredis.from_url() instead — redis-py
+    5.x SSLConnection does not accept an SSLContext object directly.
 
     Returns None when the Redis URL is not rediss://.
-
-    Python 3.12 note: ssl.create_default_context() uses PROTOCOL_TLS_CLIENT
-    which bakes in check_hostname=True and CERT_REQUIRED.  Changing verify_mode
-    to CERT_NONE on that context is unreliable across builds.  For the
-    no-verification (self-signed cert) path we start with a fresh
-    SSLContext(PROTOCOL_TLS_CLIENT) and disable both flags explicitly.
-
-    To allow self-signed certificates set:
-        REDIS_SSL_CERT_REQS=none
     """
     if not settings.redis_url.startswith("rediss://"):
         return None
@@ -62,10 +58,31 @@ def build_redis_ssl_context() -> Optional[ssl.SSLContext]:
 
 
 def _build_redis_kwargs() -> dict:
+    """Build connection kwargs for aioredis.from_url().
+
+    redis-py 5.x note: SSLConnection.__init__() does NOT accept 'ssl' or
+    'ssl_context' kwargs.  Unknown kwargs flow through **kwargs all the way to
+    AbstractConnection.__init__() which raises:
+        TypeError: AbstractConnection.__init__() got an unexpected keyword
+                   argument 'ssl'
+    The correct approach is to pass the named SSL params (ssl_cert_reqs,
+    ssl_ca_certs, etc.) which SSLConnection accepts explicitly.
+    The rediss:// URL scheme already tells redis-py to use SSLConnection;
+    no separate 'ssl=True' flag is needed.
+    """
     kwargs: dict = {"decode_responses": True}
-    ssl_ctx = build_redis_ssl_context()
-    if ssl_ctx is not None:
-        kwargs["ssl"] = ssl_ctx
+    if not settings.redis_url.startswith("rediss://"):
+        return kwargs
+
+    # Map our config → redis-py SSLConnection params.
+    # For self-signed certificates set REDIS_SSL_CERT_REQS=none.
+    kwargs["ssl_cert_reqs"] = settings.redis_ssl_cert_reqs.lower()
+    if settings.redis_ssl_ca_certs:
+        kwargs["ssl_ca_certs"] = settings.redis_ssl_ca_certs
+    if settings.redis_ssl_certfile:
+        kwargs["ssl_certfile"] = settings.redis_ssl_certfile
+    if settings.redis_ssl_keyfile:
+        kwargs["ssl_keyfile"] = settings.redis_ssl_keyfile
     return kwargs
 
 
