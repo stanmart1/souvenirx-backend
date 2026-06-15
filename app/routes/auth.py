@@ -25,6 +25,7 @@ router = APIRouter()
 
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Customer registration - creates user with 'customer' role"""
     import secrets
     
     client_ip = request.client.host if request.client else "unknown"
@@ -42,10 +43,61 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         password_hash=hash_password(req.password),
         full_name=req.full_name,
         phone=req.phone,
+        role="customer",  # Explicitly set role
         email_verified=False,
         verification_token=verification_token,
     )
     db.add(user)
+    await db.flush()
+
+    # Send verification email
+    try:
+        from app.services.email import send_verification_email
+        await send_verification_email(user.email, user.full_name, verification_token, db)
+    except Exception as e:
+        print(f"Failed to send verification email: {e}")
+
+    return TokenResponse(
+        access_token=create_access_token({"sub": str(user.id)}),
+        refresh_token=create_refresh_token({"sub": str(user.id)}),
+    )
+
+
+@router.post("/affiliate/register", response_model=TokenResponse)
+async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Affiliate registration - creates user with 'affiliate' role"""
+    import secrets
+    from app.models.affiliate import Affiliate
+    
+    client_ip = request.client.host if request.client else "unknown"
+    if not await check_rate_limit(f"rl:affiliate_register:{client_ip}", 5, 300):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Please wait.")
+    result = await db.execute(select(User).where(User.email == req.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Generate verification token
+    verification_token = secrets.token_urlsafe(32)
+    
+    user = User(
+        email=req.email,
+        password_hash=hash_password(req.password),
+        full_name=req.full_name,
+        phone=req.phone,
+        role="affiliate",  # Set role as affiliate
+        email_verified=False,
+        verification_token=verification_token,
+    )
+    db.add(user)
+    await db.flush()
+    
+    # Create affiliate record
+    affiliate = Affiliate(
+        user_id=user.id,
+        referral_code=secrets.token_urlsafe(8).upper()[:8],
+        commission_rate=10.0,  # Default 10% commission
+    )
+    db.add(affiliate)
     await db.flush()
 
     # Send verification email
@@ -109,6 +161,7 @@ async def resend_verification(user: User = Depends(get_current_user), db: AsyncS
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Customer login - only allows users with 'customer' role"""
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:login:{client_ip}", 10, 300):
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
@@ -116,6 +169,52 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Only allow customers to login via this endpoint
+    if user.role != "customer":
+        raise HTTPException(status_code=403, detail="Please use the appropriate login page for your account type")
+
+    return TokenResponse(
+        access_token=create_access_token({"sub": str(user.id)}),
+        refresh_token=create_refresh_token({"sub": str(user.id)}),
+    )
+
+
+@router.post("/affiliate/login", response_model=TokenResponse)
+async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Affiliate login - only allows users with 'affiliate' role"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not await check_rate_limit(f"rl:affiliate_login:{client_ip}", 10, 300):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Only allow affiliates to login via this endpoint
+    if user.role != "affiliate":
+        raise HTTPException(status_code=403, detail="This login is for affiliates only. Please use the customer login page.")
+
+    return TokenResponse(
+        access_token=create_access_token({"sub": str(user.id)}),
+        refresh_token=create_refresh_token({"sub": str(user.id)}),
+    )
+
+
+@router.post("/admin/login", response_model=TokenResponse)
+async def admin_login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Admin login - only allows users with 'admin' role"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not await check_rate_limit(f"rl:admin_login:{client_ip}", 10, 300):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Only allow admins to login via this endpoint
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
