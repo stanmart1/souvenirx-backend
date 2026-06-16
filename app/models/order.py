@@ -75,9 +75,12 @@ class OrderItem(Base):
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[int] = mapped_column(Integer, nullable=False)
     customization: Mapped[Optional[dict]] = mapped_column(JSONB)
+    customer_design_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("customer_designs.id", ondelete="SET NULL"))
+    design_preview_url: Mapped[Optional[str]] = mapped_column(String(500))
 
     order: Mapped["Order"] = relationship(back_populates="items")
     product: Mapped["Product"] = relationship()
+    customer_design: Mapped[Optional["CustomerDesign"]] = relationship()
 
 
 class OrderTracking(Base):

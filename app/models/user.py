@@ -40,6 +40,7 @@ class User(Base):
     affiliate: Mapped[Optional["Affiliate"]] = relationship(back_populates="user", uselist=False)
     cart_items: Mapped[list["CartItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     wishlist_items: Mapped[list["WishlistItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    projects: Mapped[list["UserProject"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     
     def get_roles(self) -> list[str]:
         """Get list of roles for this user"""

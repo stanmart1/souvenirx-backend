@@ -19,8 +19,10 @@ class CartItem(Base):
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
     customization: Mapped[Optional[dict]] = mapped_column(JSONB)
     logo_url: Mapped[Optional[str]] = mapped_column(String(500))
+    customer_design_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("customer_designs.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="cart_items")
     product: Mapped["Product"] = relationship()
     variant: Mapped["ProductVariant"] = relationship()
+    customer_design: Mapped[Optional["CustomerDesign"]] = relationship()

@@ -9,7 +9,8 @@ from app.models.bank_account import BankAccount
 from app.models.cart import CartItem
 from app.models.wishlist import WishlistItem
 from app.models.settings import Settings, SystemSettings, HomepageContent, Ad, EmailTemplate, SmsTemplate, CartRecovery
-from app.models.logo_upload import LogoUpload, LogoUploadStatus
+from app.models.logo_upload import LogoUpload, LogoOverlayConfig, ProductMockupTemplate
+from app.models.design_template import DesignTemplate, CustomerDesign
 from app.models.guest_session import GuestSession
 from app.models.notification import Notification, NotificationType
 from app.models.support_ticket import SupportTicket, TicketStatus, TicketPriority
@@ -18,6 +19,10 @@ from app.models.newsletter import NewsletterSubscriber
 from app.models.payment_method import SavedPaymentMethod
 from app.models.stock_notification import StockNotification
 from app.models.email_campaign import EmailCampaign, CampaignRecipient
+from app.models.audit_log import AuditLog
+from app.models.product_bundle import ProductBundle
+from app.models.user_project import UserProject
+from app.models.trending_template import TrendingTemplate
 
 __all__ = [
     "User", "Address",
@@ -31,7 +36,8 @@ __all__ = [
     "CartItem",
     "WishlistItem",
     "Settings", "SystemSettings", "HomepageContent", "Ad", "EmailTemplate", "SmsTemplate", "CartRecovery",
-    "LogoUpload", "LogoUploadStatus",
+    "LogoUpload", "LogoOverlayConfig", "ProductMockupTemplate",
+    "DesignTemplate", "CustomerDesign",
     "GuestSession",
     "Notification", "NotificationType",
     "SupportTicket", "TicketStatus", "TicketPriority",
@@ -40,4 +46,8 @@ __all__ = [
     "SavedPaymentMethod",
     "StockNotification",
     "EmailCampaign", "CampaignRecipient",
+    "AuditLog",
+    "ProductBundle",
+    "UserProject",
+    "TrendingTemplate",
 ]

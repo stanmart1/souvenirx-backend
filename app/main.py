@@ -80,6 +80,10 @@ from app.routes.stock_notifications import router as stock_notifications_router
 from app.routes.campaigns import router as campaigns_router
 from app.routes.auth_oauth import router as oauth_router
 from app.routes.config import router as config_router
+from app.routes.design_templates import router as design_templates_router
+from app.routes.logos import router as logos_router
+from app.routes.customer_designs import router as customer_designs_router
+from app.routes.mockup_templates import router as mockup_templates_router
 
 app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
@@ -104,6 +108,10 @@ app.include_router(admin_settings_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(stock_notifications_router, prefix="/api/stock-notifications", tags=["Stock Notifications"])
 app.include_router(campaigns_router, prefix="/api", tags=["Campaigns"])
 app.include_router(oauth_router, prefix="/api/auth", tags=["Auth"])
+app.include_router(design_templates_router, tags=["Design Templates"])
+app.include_router(logos_router, tags=["Logos"])
+app.include_router(customer_designs_router, tags=["Customer Designs"])
+app.include_router(mockup_templates_router, tags=["Mockup Templates"])
 
 
 @app.get("/api/health")
