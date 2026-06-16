@@ -1,8 +1,11 @@
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import uuid
 
+from app.config import settings
 from app.database import get_db
 from app.models.testimonial import Testimonial
 from app.models.user import User
@@ -62,8 +65,20 @@ async def create_testimonial(
         allowed_types = ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"]
         if media.content_type not in allowed_types:
             raise HTTPException(status_code=400, detail="Invalid file type")
-        
-        media_url = f"/uploads/testimonials/{media.filename}"
+
+        ext = media.filename.split(".")[-1].lower() if media.filename and "." in media.filename else "jpg"
+        content = await media.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+        filename = f"{uuid.uuid4()}.{ext}"
+        upload_path = Path(settings.upload_dir) / "testimonials" / filename
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(upload_path, "wb") as f:
+            f.write(content)
+
+        media_url = f"/uploads/testimonials/{filename}"
         media_type = "image" if media.content_type.startswith("image/") else "video"
     
     testimonial = Testimonial(

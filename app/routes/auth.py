@@ -1,12 +1,15 @@
+import json
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, Address
 from app.models.guest_session import GuestSession
+from app.models.cart import CartItem
+from app.models.order import Order
 from app.schemas.auth import (
     RegisterRequest, LoginRequest, TokenResponse, RefreshRequest,
     UserResponse, UpdateProfileRequest, ChangePasswordRequest,
@@ -473,9 +476,44 @@ async def convert_guest_to_user(
     # Update guest with conversion info
     guest.converted_to_user_id = user.id
     guest.converted_at = datetime.now()
-    
-    # TODO: Merge guest cart to user cart
-    # TODO: Transfer guest orders to user
+
+    # Merge guest cart into user cart
+    if guest.cart_data:
+        try:
+            items = json.loads(guest.cart_data)
+            if isinstance(items, list):
+                existing = await db.execute(
+                    select(CartItem).where(CartItem.user_id == user.id)
+                )
+                existing_keys = {
+                    (str(c.product_id), str(c.variant_id or ""))
+                    for c in existing.scalars().all()
+                }
+                for item in items:
+                    pid = item.get("product_id") or item.get("productId")
+                    if not pid:
+                        continue
+                    vid = item.get("variant_id") or item.get("variantId")
+                    key = (str(pid), str(vid or ""))
+                    if key in existing_keys:
+                        continue
+                    db.add(CartItem(
+                        user_id=user.id,
+                        product_id=uuid.UUID(str(pid)),
+                        variant_id=uuid.UUID(str(vid)) if vid else None,
+                        qty=item.get("qty", 1),
+                        customization=item.get("customization"),
+                        logo_url=item.get("logo_url") or item.get("logoUrl"),
+                    ))
+        except (json.JSONDecodeError, ValueError, KeyError):
+            pass
+
+    # Transfer guest orders to the new user account
+    await db.execute(
+        update(Order)
+        .where(Order.email == guest.email, Order.user_id.is_(None))
+        .values(user_id=user.id)
+    )
     
     await db.flush()
     

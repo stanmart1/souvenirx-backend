@@ -1,8 +1,12 @@
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.models.review import Review
 from app.models.product import Product
@@ -38,14 +42,23 @@ async def create_review(
     media_url = None
     media_type = None
     if media:
-        # Validate file type
         allowed_types = ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"]
         if media.content_type not in allowed_types:
             raise HTTPException(status_code=400, detail="Invalid file type")
-        
-        # In production, upload to cloud storage
-        # For now, just store the filename
-        media_url = f"/uploads/reviews/{media.filename}"
+
+        ext = media.filename.split(".")[-1].lower() if media.filename and "." in media.filename else "jpg"
+        content = await media.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+        filename = f"{uuid.uuid4()}.{ext}"
+        upload_path = Path(settings.upload_dir) / "reviews" / filename
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(upload_path, "wb") as f:
+            f.write(content)
+
+        media_url = f"/uploads/reviews/{filename}"
         media_type = "image" if media.content_type.startswith("image/") else "video"
     
     review = Review(

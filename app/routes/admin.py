@@ -42,6 +42,8 @@ from app.schemas.payment import (
     PromoCreate,
     PromoUpdate,
 )
+from app.services.email import send_email
+from app.config import settings
 
 router = APIRouter()
 
@@ -1332,28 +1334,29 @@ async def send_order_email(
     
     if not subject or not message:
         raise HTTPException(status_code=400, detail="Subject and message are required")
-    
-    # In production, integrate with email service (SMTP, SendGrid, etc.)
-    # For now, we'll just log it and create a tracking event
+
     db.add(OrderTracking(
         order_id=order.id,
         status=order.status,
         description=f"Email sent to customer: {subject}"
     ))
-    
+
     await db.flush()
-    
-    # TODO: Actual email sending logic here
-    # Example:
-    # await send_email(
-    #     to=order.user.email,
-    #     subject=subject,
-    #     body=message
-    # )
-    
+
+    html = (
+        f'<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:600px;margin:0 auto;">'
+        f'<h2 style="color:#333;">Message from SouvenirX regarding order {order.order_number}</h2>'
+        f'<div style="background:#f9f5f1;border-radius:12px;padding:24px;margin:16px 0;">'
+        f'{message}'
+        f'</div>'
+        f'<p style="color:#888;font-size:13px;">This is an automated message from the SouvenirX support team.</p>'
+        f'</div>'
+    )
+    sent = await send_email(to=order.email, subject=subject, html=html)
+
     return {
-        "message": f"Email sent to {order.user.email}",
-        "recipient": order.user.email,
+        "message": f"Email {'sent' if sent else 'queued'} to {order.email}",
+        "recipient": order.email,
         "subject": subject,
     }
 
@@ -1965,8 +1968,8 @@ async def generate_referral_link(
     if not affiliate:
         raise HTTPException(status_code=404, detail="Affiliate not found")
     
-    # Get base URL from settings or environment
-    base_url = "https://souvenirx.com"  # TODO: Get from settings
+    # Get base URL from settings
+    base_url = settings.frontend_url.rstrip("/")
     referral_link = f"{base_url}?ref={affiliate.referral_code}"
     
     return {
@@ -2199,22 +2202,48 @@ async def verify_bank_account(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Bank account not found")
-    
-    # TODO: Integrate with Paystack API for real verification
-    # For now, just validate format
+
     if not account.account_number or len(account.account_number) != 10:
         raise HTTPException(status_code=400, detail="Invalid account number format (must be 10 digits)")
-    
+
     if not account.bank_code:
         raise HTTPException(status_code=400, detail="Bank code required for verification")
-    
-    # Mock verification - in production, call Paystack API
+
+    if not settings.paystack_secret_key:
+        raise HTTPException(status_code=503, detail="Paystack is not configured. Set PAYSTACK_SECRET_KEY.")
+
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.paystack.co/bank/resolve",
+                params={
+                    "account_number": account.account_number,
+                    "bank_code": account.bank_code,
+                },
+                headers={"Authorization": f"Bearer {settings.paystack_secret_key}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("message", "Paystack verification failed") if e.response else "Paystack API error"
+        raise HTTPException(status_code=400, detail=f"Paystack verification failed: {detail}")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not reach Paystack API")
+
+    if not data.get("status"):
+        raise HTTPException(status_code=400, detail=data.get("message", "Account could not be resolved"))
+
+    resolved_name = data["data"].get("account_name", "")
+    account.account_name = resolved_name
     account.is_verified = True
     await db.flush()
-    
+
     return {
         "message": "Account verified successfully",
-        "account_name": account.account_name,
+        "account_name": resolved_name,
+        "account_number": account.account_number,
         "is_verified": True,
     }
 

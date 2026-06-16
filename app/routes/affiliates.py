@@ -18,13 +18,8 @@ router = APIRouter()
 async def register_affiliate(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.services.settings import get_bool_setting
     
-    # Check if affiliate requires email verification
-    require_verification = await get_bool_setting(db, "affiliate_require_email_verification", True)
-    if require_verification and not user.email_verified:
-        raise HTTPException(
-            status_code=400, 
-            detail="Please verify your email address before registering as an affiliate"
-        )
+    # Email verification is no longer required for affiliate registration
+    # This is consistent with admin access which also does not require email verification
     
     result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
     if result.scalar_one_or_none():

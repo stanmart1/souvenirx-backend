@@ -1,11 +1,13 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_optional_user, get_current_admin
 from app.models.user import User
@@ -29,18 +31,33 @@ async def create_ticket(
     
     attachment_url = None
     attachment_name = None
-    
+
     if attachment:
-        # In production, upload to cloud storage
-        # For now, just store the filename
+        allowed_extensions = {"jpg", "jpeg", "png", "pdf", "doc", "docx"}
+        ext = attachment.filename.split(".")[-1].lower() if attachment.filename and "." in attachment.filename else "bin"
+        if ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPG, PNG, PDF, DOC, DOCX")
+
+        content = await attachment.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+        filename = f"{uuid.uuid4()}.{ext}"
+        upload_path = Path(settings.upload_dir) / "support" / filename
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(upload_path, "wb") as f:
+            f.write(content)
+
+        attachment_url = f"/uploads/support/{filename}"
         attachment_name = attachment.filename
-        # TODO: Implement file upload to S3/Cloudinary
     
     ticket = SupportTicket(
         user_id=user.id,
         subject=subject,
         message=message,
         category=category,
+        attachment_url=attachment_url,
         attachment_name=attachment_name,
         status=TicketStatus.open,
         priority=TicketPriority.medium,

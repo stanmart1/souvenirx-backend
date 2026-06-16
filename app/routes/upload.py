@@ -124,8 +124,6 @@ async def upload_logo(
     with open(upload_path, "wb") as f:
         f.write(file_content)
     
-    # In production, you would upload to S3/Cloudinary here and get a public URL
-    # For now, we'll use a relative path that can be served
     file_url = f"/uploads/{LOGO_UPLOAD_DIR}/{unique_filename}"
     
     # Create database record
