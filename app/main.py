@@ -84,6 +84,10 @@ from app.routes.design_templates import router as design_templates_router
 from app.routes.logos import router as logos_router
 from app.routes.customer_designs import router as customer_designs_router
 from app.routes.mockup_templates import router as mockup_templates_router
+from app.routers.product_bundles import router as product_bundles_router
+from app.routers.user_projects import router as user_projects_router
+from app.routers.trending_templates import router as trending_templates_router
+from app.routers.recommendations import router as recommendations_router
 
 app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
@@ -112,6 +116,10 @@ app.include_router(design_templates_router, tags=["Design Templates"])
 app.include_router(logos_router, tags=["Logos"])
 app.include_router(customer_designs_router, tags=["Customer Designs"])
 app.include_router(mockup_templates_router, tags=["Mockup Templates"])
+app.include_router(product_bundles_router, tags=["Product Bundles"])
+app.include_router(user_projects_router, tags=["User Projects"])
+app.include_router(trending_templates_router, tags=["Trending Templates"])
+app.include_router(recommendations_router, tags=["Recommendations"])
 
 
 @app.get("/api/health")
