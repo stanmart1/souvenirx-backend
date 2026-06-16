@@ -59,6 +59,13 @@ async def create_order(
     user = user_or_guest[0]
     guest = user_or_guest[1]
     
+    # Require email verification for registered users
+    if user and not user.email_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email address before placing an order. Check your inbox for the verification link."
+        )
+    
     # Idempotency: when the client supplies X-Idempotency-Key, dedupe retries
     # for 1h. When absent, we don't enforce (client is responsible for retries).
     client_idempotency_key = request.headers.get("X-Idempotency-Key")

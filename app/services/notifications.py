@@ -1,4 +1,8 @@
-"""Helper for creating in-app notifications at key business events."""
+"""Helper for creating in-app notifications at key business events.
+
+Every `notify_*` helper now also sends an FCM push notification
+(if the user has a registered device token).
+"""
 from __future__ import annotations
 
 import uuid
@@ -32,6 +36,27 @@ async def create_notification(
     return notif
 
 
+async def _send_push(
+    db: "AsyncSession",
+    user_id: uuid.UUID,
+    title: str,
+    message: str,
+    link: str | None = None,
+    notification_type: str | None = None,
+) -> None:
+    """Fire-and-forget FCM push. Never raises — errors are logged internally."""
+    try:
+        from app.services.fcm_service import send_push
+        data = {}
+        if link:
+            data["link"] = link
+        if notification_type:
+            data["type"] = notification_type
+        await send_push(db, user_id, title=title, body=message, data=data)
+    except Exception:
+        pass  # Push failure must never break the calling flow
+
+
 # ── Convenience wrappers for each event ──────────────────────────────────────
 
 async def notify_order_placed(db: "AsyncSession", user_id: uuid.UUID, order_number: str) -> None:
@@ -43,6 +68,10 @@ async def notify_order_placed(db: "AsyncSession", user_id: uuid.UUID, order_numb
         link=f"/track?id={order_number}",
         link_text="Track order",
     )
+    await _send_push(db, user_id, "Order placed",
+                     f"Your order {order_number} has been received.",
+                     link=f"/track?id={order_number}",
+                     notification_type="order_status")
 
 
 async def notify_order_cancelled(db: "AsyncSession", user_id: uuid.UUID, order_number: str) -> None:
@@ -54,6 +83,10 @@ async def notify_order_cancelled(db: "AsyncSession", user_id: uuid.UUID, order_n
         link=f"/track?id={order_number}",
         link_text="View order",
     )
+    await _send_push(db, user_id, "Order cancelled",
+                     f"Your order {order_number} has been cancelled.",
+                     link=f"/track?id={order_number}",
+                     notification_type="order_status")
 
 
 async def notify_payment_confirmed(db: "AsyncSession", user_id: uuid.UUID, order_number: str) -> None:
@@ -65,6 +98,10 @@ async def notify_payment_confirmed(db: "AsyncSession", user_id: uuid.UUID, order
         link=f"/track?id={order_number}",
         link_text="Track order",
     )
+    await _send_push(db, user_id, "Payment confirmed",
+                     f"Payment for order {order_number} was successful.",
+                     link=f"/track?id={order_number}",
+                     notification_type="payment")
 
 
 async def notify_payment_rejected(db: "AsyncSession", user_id: uuid.UUID, order_number: str) -> None:
@@ -76,6 +113,10 @@ async def notify_payment_rejected(db: "AsyncSession", user_id: uuid.UUID, order_
         link=f"/track?id={order_number}",
         link_text="View order",
     )
+    await _send_push(db, user_id, "Payment could not be verified",
+                     f"We could not verify payment for order {order_number}.",
+                     link=f"/track?id={order_number}",
+                     notification_type="payment")
 
 
 async def notify_bank_transfer_received(db: "AsyncSession", user_id: uuid.UUID, order_number: str) -> None:
@@ -87,6 +128,10 @@ async def notify_bank_transfer_received(db: "AsyncSession", user_id: uuid.UUID, 
         link=f"/track?id={order_number}",
         link_text="Track order",
     )
+    await _send_push(db, user_id, "Bank transfer proof received",
+                     f"Proof of payment for order {order_number} received.",
+                     link=f"/track?id={order_number}",
+                     notification_type="payment")
 
 
 async def notify_order_status_changed(
@@ -114,6 +159,10 @@ async def notify_order_status_changed(
         link=f"/track?id={order_number}",
         link_text="Track order",
     )
+    await _send_push(db, user_id, title,
+                     msg_tpl.format(n=order_number),
+                     link=f"/track?id={order_number}",
+                     notification_type="order_status")
 
 
 async def notify_affiliate_approved(db: "AsyncSession", user_id: uuid.UUID) -> None:
@@ -125,6 +174,10 @@ async def notify_affiliate_approved(db: "AsyncSession", user_id: uuid.UUID) -> N
         link="/affiliate",
         link_text="Go to dashboard",
     )
+    await _send_push(db, user_id, "Affiliate account approved",
+                     "Your affiliate account has been approved.",
+                     link="/affiliate",
+                     notification_type="system")
 
 
 async def notify_affiliate_suspended(db: "AsyncSession", user_id: uuid.UUID) -> None:
@@ -134,6 +187,9 @@ async def notify_affiliate_suspended(db: "AsyncSession", user_id: uuid.UUID) -> 
         title="Affiliate account suspended",
         message="Your affiliate account has been suspended. Please contact support for more information.",
     )
+    await _send_push(db, user_id, "Affiliate account suspended",
+                     "Your affiliate account has been suspended.",
+                     notification_type="system")
 
 
 async def notify_payout_processed(db: "AsyncSession", user_id: uuid.UUID, amount: int) -> None:
@@ -145,3 +201,23 @@ async def notify_payout_processed(db: "AsyncSession", user_id: uuid.UUID, amount
         link="/affiliate",
         link_text="View earnings",
     )
+    await _send_push(db, user_id, "Payout processed",
+                     f"A payout of ₦{amount:,} has been processed.",
+                     link="/affiliate",
+                     notification_type="payment")
+
+
+async def notify_stock_back(db: "AsyncSession", user_id: uuid.UUID, product_name: str, product_id: str) -> None:
+    """Notify a user that a product they watched is back in stock."""
+    await create_notification(
+        db, user_id,
+        type=NotificationType.promotion,
+        title="Product Back in Stock",
+        message=f"{product_name} is back in stock! Order now before it sells out.",
+        link=f"/products/{product_id}",
+        link_text="Shop Now",
+    )
+    await _send_push(db, user_id, "Product Back in Stock",
+                     f"{product_name} is back in stock!",
+                     link=f"/products/{product_id}",
+                     notification_type="promotion")

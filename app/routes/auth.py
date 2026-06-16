@@ -30,6 +30,7 @@ router = APIRouter()
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Customer registration - creates user with 'customer' role"""
     import secrets
+    from datetime import timedelta, timezone
     
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:register:{client_ip}", 5, 300):
@@ -38,7 +39,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Generate verification token
+    # Generate verification token with 24-hour expiration
     verification_token = secrets.token_urlsafe(32)
     
     user = User(
@@ -49,6 +50,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         role="customer",  # Explicitly set role
         email_verified=False,
         verification_token=verification_token,
+        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.add(user)
     await db.flush()
@@ -70,6 +72,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Affiliate registration - creates user with 'affiliate' role"""
     import secrets
+    from datetime import timedelta, timezone
     from app.models.affiliate import Affiliate
     
     client_ip = request.client.host if request.client else "unknown"
@@ -79,7 +82,7 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Generate verification token
+    # Generate verification token with 24-hour expiration
     verification_token = secrets.token_urlsafe(32)
     
     user = User(
@@ -90,6 +93,7 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
         role="affiliate",  # Set role as affiliate
         email_verified=False,
         verification_token=verification_token,
+        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.add(user)
     await db.flush()
@@ -117,16 +121,31 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
 
 
 @router.post("/verify-email")
-async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
+async def verify_email(token: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Verify user email with verification token"""
+    from datetime import timezone
+    
+    # Rate limiting: 5 attempts per 5 minutes per IP
+    client_ip = request.client.host if request.client else "unknown"
+    if not await check_rate_limit(f"rl:verify:{client_ip}", 5, 300):
+        raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait a few minutes.")
+    
     result = await db.execute(select(User).where(User.verification_token == token))
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+        raise HTTPException(status_code=400, detail="Invalid verification link. Please request a new one.")
+    
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Email already verified. You can proceed to login.")
+    
+    # Check if token has expired
+    if user.verification_token_expires_at and user.verification_token_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Verification link has expired. Please request a new one from your profile.")
     
     user.email_verified = True
     user.verification_token = None
+    user.verification_token_expires_at = None
     await db.commit()
 
     # Send welcome email now that the address is confirmed
@@ -143,13 +162,15 @@ async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
 async def resend_verification(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Resend verification email"""
     import secrets
+    from datetime import timedelta, timezone
     
     if user.email_verified:
         raise HTTPException(status_code=400, detail="Email already verified")
     
-    # Generate new verification token
+    # Generate new verification token with 24-hour expiration
     verification_token = secrets.token_urlsafe(32)
     user.verification_token = verification_token
+    user.verification_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     await db.commit()
     
     # Send verification email
@@ -272,6 +293,21 @@ async def update_me(
         user.phone = req.phone
     await db.flush()
     return user
+
+
+@router.put("/me/fcm-token")
+async def update_fcm_token(
+    req: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Register or refresh the FCM device token for the authenticated user."""
+    token = req.get("fcm_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="fcm_token is required")
+    user.fcm_token = token
+    await db.flush()
+    return {"message": "FCM token updated"}
 
 
 @router.post("/change-password")
