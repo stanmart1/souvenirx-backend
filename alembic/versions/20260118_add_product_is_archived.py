@@ -1,7 +1,7 @@
 """add product is_archived field
 
 Revision ID: 20260118_add_archived
-Revises: 20260617_add_review_moderation_fields
+Revises: 20260617_add_review_moderation
 Create Date: 2026-01-18 00:00:00.000000
 
 """

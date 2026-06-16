@@ -27,7 +27,7 @@ async def clean_alembic_version():
             
             if not table_exists:
                 print("alembic_version table does not exist. Creating it...")
-                await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"))
+                await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL PRIMARY KEY)"))
                 await session.commit()
                 print("Created alembic_version table")
                 return

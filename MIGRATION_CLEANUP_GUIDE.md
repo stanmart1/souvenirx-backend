@@ -66,11 +66,9 @@ The current migration chain is:
   ↓
 20250102_add_guest_sessions
   ↓
-20250103_add_notifications
-  ↓
 ... (continues through all migrations)
   ↓
-20250119_add_sms_templates (head)
+20260618_002 (head)
 ```
 
 ## Verification

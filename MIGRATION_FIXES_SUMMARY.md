@@ -81,39 +81,9 @@
   ↓
 20250102_add_guest_sessions
   ↓
-20250103_add_notifications
+... (continues through all migrations)
   ↓
-20250104_add_support_tickets
-  ↓
-20250105_add_review_media
-  ↓
-20250106_add_testimonials
-  ↓
-20250107_add_newsletter_subscribers
-  ↓
-20250108_add_payment_methods
-  ↓
-20250109_add_product_groups_variants
-  ↓
-20250110_enhance_delivery_shipping
-  ↓
-20250111_add_shipping_automation
-  ↓
-20250112_add_west_africa_lga_support
-  ↓
-20250113_add_homepage_content
-  ↓
-20250114_add_performance_indexes
-  ↓
-20250115_add_cart_variant_logo_support
-  ↓
-20250116_add_ads_table
-  ↓
-20250117_add_email_templates
-  ↓
-20250118_add_cart_recovery
-  ↓
-20250119_add_sms_templates (head)
+20260618_002 (head)
 ```
 
 ## How to Apply Fixes
@@ -159,7 +129,7 @@ After applying fixes, verify everything is working:
 # Check current migration
 docker exec -it <container_name> alembic current
 
-# Should show: 20250119_add_sms_templates (head)
+# Should show: 20260618_002 (head)
 
 # Check for multiple heads (should show only one)
 docker exec -it <container_name> alembic heads
@@ -184,7 +154,7 @@ INFO  [alembic.runtime.migration] Will assume transactional DDL.
 INFO  [alembic.runtime.migration] Running upgrade  -> 20250101_add_logo_uploads
 INFO  [alembic.runtime.migration] Running upgrade 20250101_add_logo_uploads -> 20250102_add_guest_sessions
 ...
-INFO  [alembic.runtime.migration] Running upgrade 20250118_add_cart_recovery -> 20250119_add_sms_templates
+INFO  [alembic.runtime.migration] Running upgrade 20260618_add_design_template_system -> 20260618_002
 Starting SouvenirX API...
 ```
 

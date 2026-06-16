@@ -1,7 +1,7 @@
 """add verification token expiry and audit logs
 
 Revision ID: 20250616_001
-Revises: (previous revision)
+Revises: 20250122_add_stock_notifications
 Create Date: 2026-06-16
 
 """
