@@ -57,7 +57,7 @@ DEFAULT_EMAIL_TEMPLATES = [
                             <h2 style="margin:0 0 8px;color:#1a1a1a;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Verify Your Email Address</h2>
                             <p style="margin:0 0 28px;color:#888888;font-size:14px;">One last step to activate your account</p>
                             <p style="margin:0 0 20px;color:#444444;font-size:16px;line-height:1.7;">Hi <strong>{{customer_name}}</strong>,</p>
-                            <p style="margin:0 0 28px;color:#555555;font-size:16px;line-height:1.7;">Thanks for signing up at SouvenirX! Please verify your email address by clicking the button below. This link expires in <strong>24 hours</strong>.</p>
+                            <p style="margin:0 0 28px;color:#555555;font-size:16px;line-height:1.7;">Thanks for signing up at SouvenirX! Please verify your email address by clicking the button below. <strong>This link expires in 24 hours</strong> for your security.</p>
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 32px;">
                                 <tr>
                                     <td style="text-align:center;">
@@ -443,6 +443,37 @@ DEFAULT_EMAIL_TEMPLATES = [
             "customer_name": "string",
             "admin_url": "string",
         },
+        "is_active": True,
+    },
+
+    # ── PASSWORD RESET BY ADMIN ──────────────────────────────────────────────
+    {
+        "name": "password_reset_by_admin",
+        "subject": "Your Password Has Been Reset — SouvenirX",
+        "html_content": _WRAPPER_OPEN + _HEADER + """
+                    <tr>
+                        <td style="padding:48px 40px 40px;">
+                            <h2 style="margin:0 0 8px;color:#1a1a1a;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Password Reset Notification</h2>
+                            <p style="margin:0 0 28px;color:#888888;font-size:14px;">Your account password has been changed</p>
+                            <p style="margin:0 0 20px;color:#444444;font-size:16px;line-height:1.7;">Hi <strong>{{customer_name}}</strong>,</p>
+                            <p style="margin:0 0 28px;color:#555555;font-size:16px;line-height:1.7;">Your password has been reset by our support team (<strong>{{admin_name}}</strong>). You can now log in with your new password.</p>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color:#fff3e0;border:1px solid #ffe0b2;border-radius:8px;margin:0 0 28px;">
+                                <tr>
+                                    <td style="padding:16px 20px;">
+                                        <p style="margin:0 0 6px;color:#e65100;font-size:13px;font-weight:600;">⚠️ Security Notice</p>
+                                        <p style="margin:0;color:#666666;font-size:13px;line-height:1.6;">If you did not request this password reset, please contact our support team immediately and change your password.</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin:0 0 20px;color:#555555;font-size:16px;line-height:1.7;">For your security, we recommend:</p>
+                            <ul style="margin:0 0 28px;padding-left:20px;color:#555555;font-size:16px;line-height:1.7;">
+                                <li style="margin-bottom:8px;">Change your password to something memorable and secure</li>
+                                <li style="margin-bottom:8px;">Use a unique password not used on other websites</li>
+                                <li>Enable two-factor authentication if available</li>
+                            </ul>
+                        </td>
+                    </tr>""" + _FOOTER + _WRAPPER_CLOSE,
+        "variables": {"customer_name": "string", "admin_name": "string"},
         "is_active": True,
     },
 ]

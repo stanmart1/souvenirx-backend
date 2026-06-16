@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.product import Product
 from app.models.stock_notification import StockNotification
 from app.models.notification import Notification, NotificationType
+from app.services.notifications import notify_stock_back
 
 router = APIRouter()
 
@@ -220,16 +221,8 @@ async def send_stock_notifications(
     notified_count = 0
     for sn in pending:
         if sn.user_id:
-            # Create in-app notification for registered users
-            in_app = Notification(
-                user_id=sn.user_id,
-                type=NotificationType.promotion,
-                title="Product Back in Stock",
-                message=f"{product.name} is back in stock! Order now before it sells out.",
-                link=f"/products/{product.id}",
-                link_text="Shop Now",
-            )
-            db.add(in_app)
+            # Create in-app notification + push for registered users
+            await notify_stock_back(db, sn.user_id, product.name, str(product.id))
         elif sn.guest_email:
             # Email service can be wired later; print for now
             print(

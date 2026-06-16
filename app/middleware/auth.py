@@ -58,8 +58,21 @@ async def get_optional_user(
 
 
 async def get_current_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != UserRole.admin.value:
+    if not user.has_role("admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
+async def require_verified_email(user: User = Depends(get_current_user)) -> User:
+    """
+    Require user to have verified email.
+    Use this dependency for sensitive operations like checkout, orders, etc.
+    """
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email address to continue. Check your inbox for the verification link or request a new one from your profile."
+        )
     return user
 
 

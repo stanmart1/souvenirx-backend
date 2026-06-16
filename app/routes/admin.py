@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1367,25 +1367,127 @@ async def list_customers(
     search: str | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_orders: int | None = None,
+    max_orders: int | None = None,
+    min_spent: float | None = None,
+    max_spent: float | None = None,
+    tags: str | None = None,
+    email_verified: bool | None = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(User).where(User.role == UserRole.customer.value)
+    """
+    List customers with advanced filtering support
+    
+    Query Parameters:
+    - search: Search by name or email
+    - date_from: Filter by join date (YYYY-MM-DD)
+    - date_to: Filter by join date (YYYY-MM-DD)
+    - min_orders: Minimum order count
+    - max_orders: Maximum order count
+    - min_spent: Minimum total spent
+    - max_spent: Maximum total spent
+    - tags: Filter by tags (comma-separated)
+    - email_verified: Filter by email verification status
+    """
+    from sqlalchemy import func
+    from app.models.order import Order
+    
+    # Base query with order count and total spent
+    query = select(
+        User,
+        func.count(Order.id).label('order_count'),
+        func.coalesce(func.sum(Order.total_amount), 0).label('total_spent')
+    ).outerjoin(Order, (Order.user_id == User.id) & (Order.status == 'completed'))
+    
+    # Filter by customer role
+    query = query.where(User.role.like('%customer%'))
+    
+    # Search filter
     if search:
         query = query.where(or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%")))
+    
+    # Date range filter
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            query = query.where(User.created_at >= from_date)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d")
+            # Add one day to include the entire end date
+            to_date = to_date + timedelta(days=1)
+            query = query.where(User.created_at < to_date)
+        except ValueError:
+            pass
+    
+    # Tags filter
+    if tags:
+        query = query.where(User.tags.ilike(f"%{tags}%"))
+    
+    # Email verification filter
+    if email_verified is not None:
+        query = query.where(User.email_verified == email_verified)
+    
+    # Group by user
+    query = query.group_by(User.id)
+    
+    # Order count filters (applied after grouping)
+    if min_orders is not None:
+        query = query.having(func.count(Order.id) >= min_orders)
+    
+    if max_orders is not None:
+        query = query.having(func.count(Order.id) <= max_orders)
+    
+    # Spending filters (applied after grouping)
+    if min_spent is not None:
+        query = query.having(func.coalesce(func.sum(Order.total_amount), 0) >= min_spent)
+    
+    if max_spent is not None:
+        query = query.having(func.coalesce(func.sum(Order.total_amount), 0) <= max_spent)
+    
+    # Order by created date
     query = query.order_by(User.created_at.desc())
-
+    
+    # Execute query with pagination
     result = await db.execute(query.offset((page - 1) * limit).limit(limit))
-    customers = result.scalars().all()
-
-    return [
-        {
-            "id": str(c.id), "name": c.full_name, "email": c.email,
-            "phone": c.phone, "joined": c.created_at.strftime("%Y-%m-%d"),
-            "is_active": c.is_active,
+    rows = result.all()
+    
+    # Get total count for pagination
+    count_query = select(func.count()).select_from(
+        select(User.id).where(User.role.like('%customer%')).subquery()
+    )
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+    
+    return {
+        "customers": [
+            {
+                "id": str(row.User.id),
+                "name": row.User.full_name,
+                "email": row.User.email,
+                "phone": row.User.phone,
+                "joined": row.User.created_at.strftime("%Y-%m-%d"),
+                "is_active": row.User.is_active,
+                "email_verified": row.User.email_verified,
+                "tags": row.User.tags,
+                "total_orders": row.order_count,
+                "total_spent": float(row.total_spent),
+            }
+            for row in rows
+        ],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit if total else 0,
         }
-        for c in customers
-    ]
+    }
 
 
 @router.get("/customers/{customer_id}")
@@ -1397,7 +1499,7 @@ async def get_customer_detail(
     from sqlalchemy import func
 
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
     )
     customer = result.scalar_one_or_none()
     if not customer:
@@ -1447,34 +1549,79 @@ async def get_customer_detail(
 async def update_customer(
     customer_id: str,
     body: dict,
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Update customer information"""
+    import re
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
     )
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     
-    # Update allowed fields
+    # Store old values for audit log
+    old_values = {
+        "full_name": customer.full_name,
+        "email": customer.email,
+        "phone": customer.phone,
+        "is_active": customer.is_active,
+    }
+    
+    # Update allowed fields with validation
     if "full_name" in body:
-        customer.full_name = body["full_name"]
+        full_name = body["full_name"]
+        if not full_name or len(full_name.strip()) < 2:
+            raise HTTPException(status_code=400, detail="Name must be at least 2 characters")
+        customer.full_name = full_name.strip()
+    
     if "email" in body:
+        email = body["email"]
+        # Validate email format
+        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
         # Check if email is already taken
         existing = await db.execute(
-            select(User).where(User.email == body["email"], User.id != customer.id)
+            select(User).where(User.email == email, User.id != customer.id)
         )
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Email already in use")
-        customer.email = body["email"]
+        customer.email = email
+    
     if "phone" in body:
-        customer.phone = body["phone"]
+        phone = body["phone"]
+        if phone and not re.match(r"^\+?[0-9\s\-()]{10,20}$", phone):
+            raise HTTPException(status_code=400, detail="Invalid phone format")
+        customer.phone = phone
+    
     if "is_active" in body:
         customer.is_active = body["is_active"]
     
     await db.flush()
+    
+    # Log changes to audit trail
+    changes = {}
+    for key in old_values:
+        new_value = getattr(customer, key)
+        if old_values[key] != new_value:
+            changes[key] = {"old": old_values[key], "new": new_value}
+    
+    if changes:
+        await log_audit(
+            db=db,
+            admin_id=str(admin.id),
+            action="update_customer",
+            resource_type="user",
+            resource_id=customer_id,
+            changes=changes,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+        )
+    
     return {"message": "Customer updated", "id": str(customer.id)}
 
 
@@ -1513,15 +1660,17 @@ async def get_customer_notes(
 async def add_customer_note(
     customer_id: str,
     body: dict,
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a note to a customer"""
     from app.models.customer_note import CustomerNote
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     # Verify customer exists
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -1529,6 +1678,10 @@ async def add_customer_note(
     note_text = body.get("note")
     if not note_text:
         raise HTTPException(status_code=400, detail="Note text is required")
+    
+    # Validate note length (max 1000 characters)
+    if len(note_text) > 1000:
+        raise HTTPException(status_code=400, detail="Note must be 1000 characters or less")
     
     note = CustomerNote(
         customer_id=uuid.UUID(customer_id),
@@ -1538,6 +1691,18 @@ async def add_customer_note(
     db.add(note)
     await db.flush()
     
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="add_customer_note",
+        resource_type="user",
+        resource_id=customer_id,
+        changes={"note_id": note.id, "note_preview": note_text[:100]},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
     return {"message": "Note added", "id": note.id}
 
 
@@ -1545,11 +1710,13 @@ async def add_customer_note(
 async def delete_customer_note(
     customer_id: str,
     note_id: int,
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a customer note"""
     from app.models.customer_note import CustomerNote
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     result = await db.execute(
         select(CustomerNote).where(
@@ -1561,8 +1728,24 @@ async def delete_customer_note(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     
+    # Store note content for audit log
+    note_content = note.note
+    
     await db.delete(note)
     await db.flush()
+    
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="delete_customer_note",
+        resource_type="user",
+        resource_id=customer_id,
+        changes={"note_id": note_id, "deleted_note": note_content[:100]},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
     return {"message": "Note deleted"}
 
 
@@ -1572,29 +1755,41 @@ async def calculate_customer_ltv(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Calculate customer lifetime value and metrics"""
-    from sqlalchemy import func
+    """Calculate customer lifetime value and metrics using aggregation"""
+    from sqlalchemy import func, case
     from datetime import timedelta
     
     customer_uuid = uuid.UUID(customer_id)
     
     # Verify customer exists
     result = await db.execute(
-        select(User).where(User.id == customer_uuid, User.role == UserRole.customer.value)
+        select(User).where(User.id == customer_uuid, User.role.like('%customer%'))
     )
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     
-    # Get all successful orders
-    orders_result = await db.execute(
-        select(Order)
-        .where(Order.user_id == customer_uuid, Order.payment_status == PaymentStatus.success.value)
-        .order_by(Order.created_at)
+    # Use aggregation to calculate metrics efficiently (no loading all orders)
+    stats_result = await db.execute(
+        select(
+            func.count(Order.id).label("total_orders"),
+            func.sum(Order.total).label("total_spent"),
+            func.min(Order.created_at).label("first_order_date"),
+            func.max(Order.created_at).label("last_order_date"),
+        )
+        .where(
+            Order.user_id == customer_uuid,
+            Order.payment_status == PaymentStatus.success.value
+        )
     )
-    orders = orders_result.scalars().all()
+    stats = stats_result.one()
     
-    if not orders:
+    total_orders = stats.total_orders or 0
+    total_spent = stats.total_spent or 0
+    first_order_date = stats.first_order_date
+    last_order_date = stats.last_order_date
+    
+    if total_orders == 0:
         return {
             "ltv": 0,
             "total_orders": 0,
@@ -1605,19 +1800,16 @@ async def calculate_customer_ltv(
             "purchase_frequency": 0,
         }
     
-    total_spent = sum(o.total for o in orders)
-    first_order = orders[0]
-    last_order = orders[-1]
-    lifetime_days = (datetime.now(timezone.utc) - first_order.created_at).days
+    lifetime_days = (datetime.now(timezone.utc) - first_order_date).days if first_order_date else 0
     
     return {
-        "ltv": total_spent,
-        "total_orders": len(orders),
-        "avg_order_value": int(total_spent / len(orders)),
-        "first_order_date": first_order.created_at.isoformat(),
-        "last_order_date": last_order.created_at.isoformat(),
+        "ltv": int(total_spent),
+        "total_orders": total_orders,
+        "avg_order_value": int(total_spent / total_orders),
+        "first_order_date": first_order_date.isoformat() if first_order_date else None,
+        "last_order_date": last_order_date.isoformat() if last_order_date else None,
         "customer_lifetime_days": lifetime_days,
-        "purchase_frequency": len(orders) / max(lifetime_days / 30, 1),  # orders per month
+        "purchase_frequency": total_orders / max(lifetime_days / 30, 1) if lifetime_days > 0 else 0,
     }
 
 
@@ -1625,22 +1817,101 @@ async def calculate_customer_ltv(
 async def update_customer_tags(
     customer_id: str,
     body: dict,
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Update customer tags for segmentation"""
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role == UserRole.customer.value)
+        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
     )
     customer = result.scalar_one_or_none()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     
+    old_tags = customer.tags
     tags = body.get("tags", "")
     customer.tags = tags
     
     await db.flush()
+    
+    # Log audit trail if tags changed
+    if old_tags != tags:
+        await log_audit(
+            db=db,
+            admin_id=str(admin.id),
+            action="update_customer_tags",
+            resource_type="user",
+            resource_id=customer_id,
+            changes={"old_tags": old_tags, "new_tags": tags},
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+        )
+    
     return {"message": "Tags updated", "tags": tags}
+
+
+@router.post("/customers/{customer_id}/reset-password")
+async def admin_reset_customer_password(
+    customer_id: str,
+    body: dict,
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin resets customer password"""
+    from app.services.auth import hash_password
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(customer_id))
+    )
+    customer = result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    new_password = body.get("new_password")
+    if not new_password:
+        raise HTTPException(status_code=400, detail="New password is required")
+    
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    
+    # Update password
+    customer.password_hash = hash_password(new_password)
+    await db.flush()
+    
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="reset_password",
+        resource_type="user",
+        resource_id=customer_id,
+        changes={"reset_by_admin": admin.full_name},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
+    # Send email notification to customer
+    try:
+        from app.services.email import send_templated_email
+        await send_templated_email(
+            template_name="password_reset_by_admin",
+            to_email=customer.email,
+            variables={
+                "customer_name": customer.full_name,
+                "admin_name": admin.full_name,
+            },
+            db=db
+        )
+    except Exception as e:
+        print(f"Failed to send password reset notification email: {e}")
+        # Don't fail the request if email fails
+    
+    return {"message": "Password reset successfully"}
 
 
 @router.get("/customers/export")
@@ -1648,58 +1919,66 @@ async def export_customers_csv(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export customer list as CSV"""
-    from io import StringIO
+    """Export customer list as CSV with streaming for large datasets"""
     import csv
+    from fastapi.responses import StreamingResponse
     from sqlalchemy import func
     
-    # Get all customers with order stats
-    result = await db.execute(
-        select(
-            User.id,
-            User.full_name,
-            User.email,
-            User.phone,
-            User.tags,
-            User.is_active,
-            User.created_at,
-            func.count(Order.id).label("total_orders"),
-            func.coalesce(func.sum(Order.total), 0).label("total_spent"),
-        )
-        .outerjoin(Order, (Order.user_id == User.id) & (Order.payment_status == PaymentStatus.success.value))
-        .where(User.role == UserRole.customer.value)
-        .group_by(User.id)
-        .order_by(User.created_at.desc())
-    )
-    customers = result.all()
+    async def generate_csv():
+        """Generator function for streaming CSV data"""
+        # Yield CSV header
+        yield "ID,Name,Email,Phone,Tags,Status,Joined,Total Orders,Total Spent (NGN),Email Verified\n"
+        
+        # Stream customers in batches of 100
+        batch_size = 100
+        offset = 0
+        
+        while True:
+            # Get batch of customers with order stats
+            result = await db.execute(
+                select(
+                    User.id,
+                    User.full_name,
+                    User.email,
+                    User.phone,
+                    User.tags,
+                    User.is_active,
+                    User.email_verified,
+                    User.created_at,
+                    func.count(Order.id).label("total_orders"),
+                    func.coalesce(func.sum(Order.total), 0).label("total_spent"),
+                )
+                .outerjoin(Order, (Order.user_id == User.id) & (Order.payment_status == PaymentStatus.success.value))
+                .where(User.role.like('%customer%'))
+                .group_by(User.id)
+                .order_by(User.created_at.desc())
+                .offset(offset)
+                .limit(batch_size)
+            )
+            customers = result.all()
+            
+            if not customers:
+                break
+            
+            # Yield each customer row
+            for customer in customers:
+                # Escape fields that might contain commas or quotes
+                name = f'"{customer.full_name.replace('"', '""')}"' if ',' in customer.full_name or '"' in customer.full_name else customer.full_name
+                email = customer.email
+                phone = customer.phone or ""
+                tags = f'"{(customer.tags or "").replace('"', '""')}"' if customer.tags and (',' in customer.tags or '"' in customer.tags) else (customer.tags or "")
+                status = "Active" if customer.is_active else "Inactive"
+                joined = customer.created_at.strftime("%Y-%m-%d")
+                total_orders = customer.total_orders
+                total_spent = customer.total_spent / 100  # Convert from kobo to naira
+                email_verified = "Yes" if customer.email_verified else "No"
+                
+                yield f'{customer.id},{name},{email},{phone},{tags},{status},{joined},{total_orders},{total_spent:.2f},{email_verified}\n'
+            
+            offset += batch_size
     
-    # Create CSV
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
-        "ID", "Name", "Email", "Phone", "Tags", "Status", 
-        "Joined", "Total Orders", "Total Spent (NGN)"
-    ])
-    
-    for customer in customers:
-        writer.writerow([
-            str(customer.id),
-            customer.full_name,
-            customer.email,
-            customer.phone or "",
-            customer.tags or "",
-            "Active" if customer.is_active else "Inactive",
-            customer.created_at.strftime("%Y-%m-%d"),
-            customer.total_orders,
-            customer.total_spent / 100,  # Convert from kobo to naira
-        ])
-    
-    csv_content = output.getvalue()
-    output.close()
-    
-    from fastapi.responses import Response
-    return Response(
-        content=csv_content,
+    return StreamingResponse(
+        generate_csv(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=customers_export.csv"}
     )
@@ -3230,3 +3509,556 @@ async def track_ad_click(
     ad.clicks += 1
     await db.flush()
     return {"message": "Click tracked"}
+
+
+# --- User Management ---
+@router.get("/users")
+async def list_all_users(
+    search: str | None = None,
+    role_filter: str | None = None,  # "customer", "affiliate", "admin"
+    is_active: bool | None = None,
+    email_verified: bool | None = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all users with optional filtering"""
+    query = select(User)
+    
+    if search:
+        query = query.where(
+            or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
+        )
+    
+    if role_filter:
+        query = query.where(User.role.like(f"%{role_filter}%"))
+    
+    if is_active is not None:
+        query = query.where(User.is_active == is_active)
+    
+    if email_verified is not None:
+        query = query.where(User.email_verified == email_verified)
+    
+    query = query.order_by(User.created_at.desc())
+    
+    # Get total count
+    count_query = select(func.count()).select_from(User)
+    if search:
+        count_query = count_query.where(
+            or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
+        )
+    if role_filter:
+        count_query = count_query.where(User.role.like(f"%{role_filter}%"))
+    if is_active is not None:
+        count_query = count_query.where(User.is_active == is_active)
+    if email_verified is not None:
+        count_query = count_query.where(User.email_verified == email_verified)
+    
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+    
+    result = await db.execute(query.offset((page - 1) * limit).limit(limit))
+    users = result.scalars().all()
+    
+    return {
+        "users": [
+            {
+                "id": str(u.id),
+                "name": u.full_name,
+                "email": u.email,
+                "phone": u.phone,
+                "roles": u.get_roles(),
+                "active_role": u.active_role,
+                "joined": u.created_at.strftime("%Y-%m-%d"),
+                "is_active": u.is_active,
+                "email_verified": u.email_verified,
+                "tags": u.tags,
+            }
+            for u in users
+        ],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit,
+        }
+    }
+
+
+@router.patch("/users/{user_id}/roles")
+async def update_user_roles(
+    user_id: str,
+    body: dict,
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update user roles"""
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    new_roles = body.get("roles", [])
+    valid_roles = ["customer", "affiliate", "admin"]
+    
+    if not new_roles:
+        raise HTTPException(status_code=400, detail="At least one role is required")
+    
+    if not all(r in valid_roles for r in new_roles):
+        raise HTTPException(status_code=400, detail=f"Invalid role. Valid roles: {', '.join(valid_roles)}")
+    
+    # Prevent removing admin role from yourself
+    if str(user.id) == str(admin.id) and "admin" not in new_roles:
+        raise HTTPException(status_code=400, detail="Cannot remove admin role from your own account")
+    
+    old_roles = user.get_roles()
+    user.role = ",".join(new_roles)
+    
+    # If active_role is no longer in roles, reset it to first role
+    if user.active_role and user.active_role not in new_roles:
+        user.active_role = new_roles[0]
+    
+    await db.flush()
+    
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="update_roles",
+        resource_type="user",
+        resource_id=user_id,
+        changes={"old_roles": old_roles, "new_roles": new_roles},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
+    return {"message": "Roles updated successfully", "roles": new_roles}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    permanent: bool = Query(False, description="Permanently delete user (super-admin only)"),
+    request: Request = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft delete (deactivate) or hard delete user"""
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Prevent deleting yourself
+    if str(user.id) == str(admin.id):
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    if permanent:
+        # Hard delete - requires admin role
+        if not admin.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Super admin permission required for permanent deletion")
+        
+        # Store user info for audit log before deletion
+        user_info = {
+            "email": user.email,
+            "name": user.full_name,
+            "roles": user.get_roles(),
+        }
+        
+        await db.delete(user)
+        await db.flush()
+        
+        # Log audit trail
+        await log_audit(
+            db=db,
+            admin_id=str(admin.id),
+            action="hard_delete_user",
+            resource_type="user",
+            resource_id=user_id,
+            changes={"deleted_user": user_info},
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=get_user_agent(request) if request else None,
+        )
+        
+        return {"message": "User permanently deleted"}
+    else:
+        # Soft delete - deactivate and anonymize email
+        old_email = user.email
+        user.is_active = False
+        user.email = f"deleted_{user.id}@deleted.local"
+        
+        await db.flush()
+        
+        # Log audit trail
+        await log_audit(
+            db=db,
+            admin_id=str(admin.id),
+            action="soft_delete_user",
+            resource_type="user",
+            resource_id=user_id,
+            changes={"old_email": old_email, "deactivated": True},
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=get_user_agent(request) if request else None,
+        )
+        
+        return {"message": "User deactivated successfully"}
+
+
+@router.post("/users/{user_id}/verify-email")
+async def admin_verify_user_email(
+    user_id: str,
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin manually verifies user email"""
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Email already verified")
+    
+    user.email_verified = True
+    user.verification_token = None
+    user.verification_token_expires_at = None
+    await db.flush()
+    
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="verify_email",
+        resource_type="user",
+        resource_id=user_id,
+        changes={"verified_by_admin": admin.full_name},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
+    return {"message": "Email verified successfully"}
+
+
+@router.post("/users/bulk-update")
+async def bulk_update_users(
+    body: dict,
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk update users.
+    
+    Supported actions:
+    - activate: Set is_active=True
+    - deactivate: Set is_active=False
+    - add_tag: Add a tag to users
+    - remove_tag: Remove a tag from users
+    - verify_email: Manually verify emails
+    """
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    from sqlalchemy import update as sql_update
+    
+    user_ids_str = body.get("user_ids", [])
+    action = body.get("action")
+    value = body.get("value")  # Used for add_tag/remove_tag
+    
+    if not user_ids_str:
+        raise HTTPException(status_code=400, detail="No users selected")
+    
+    if not action:
+        raise HTTPException(status_code=400, detail="Action is required")
+    
+    try:
+        user_ids = [uuid.UUID(id) for id in user_ids_str]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    
+    # Prevent bulk operations on yourself
+    if str(admin.id) in user_ids_str:
+        raise HTTPException(status_code=400, detail="Cannot perform bulk operations on your own account")
+    
+    if action == "activate":
+        await db.execute(
+            sql_update(User).where(User.id.in_(user_ids)).values(is_active=True)
+        )
+        await db.flush()
+        
+    elif action == "deactivate":
+        await db.execute(
+            sql_update(User).where(User.id.in_(user_ids)).values(is_active=False)
+        )
+        await db.flush()
+        
+    elif action == "verify_email":
+        await db.execute(
+            sql_update(User)
+            .where(User.id.in_(user_ids))
+            .values(
+                email_verified=True,
+                verification_token=None,
+                verification_token_expires_at=None
+            )
+        )
+        await db.flush()
+        
+    elif action == "add_tag":
+        if not value:
+            raise HTTPException(status_code=400, detail="Tag value is required for add_tag action")
+        
+        # Fetch users and update tags individually
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = result.scalars().all()
+        
+        for user in users:
+            existing_tags = [t.strip() for t in user.tags.split(",") if t.strip()] if user.tags else []
+            if value not in existing_tags:
+                existing_tags.append(value)
+                user.tags = ",".join(existing_tags)
+        
+        await db.flush()
+        
+    elif action == "remove_tag":
+        if not value:
+            raise HTTPException(status_code=400, detail="Tag value is required for remove_tag action")
+        
+        # Fetch users and update tags individually
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = result.scalars().all()
+        
+        for user in users:
+            existing_tags = [t.strip() for t in user.tags.split(",") if t.strip()] if user.tags else []
+            if value in existing_tags:
+                existing_tags.remove(value)
+                user.tags = ",".join(existing_tags) if existing_tags else ""
+        
+        await db.flush()
+        
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid action: {action}")
+    
+    # Log audit trail
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action=f"bulk_{action}",
+        resource_type="user",
+        resource_id=",".join(str(id) for id in user_ids),
+        changes={"action": action, "value": value, "count": len(user_ids)},
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+    )
+    
+    return {"message": f"{len(user_ids)} users updated successfully", "action": action}
+
+
+# --- Customer Impersonation ---
+@router.post("/customers/{customer_id}/impersonate")
+async def impersonate_customer(
+    customer_id: str,
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Impersonate a customer to view the site as they would see it.
+    Creates a temporary session token that allows admin to act as the customer.
+    """
+    from app.services.audit import log_audit
+    
+    # Get customer
+    result = await db.execute(select(User).where(User.id == customer_id))
+    customer = result.scalar_one_or_none()
+    
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Prevent impersonating other admins
+    if "admin" in customer.role:
+        raise HTTPException(status_code=403, detail="Cannot impersonate admin users")
+    
+    # Create impersonation token (JWT with special claim)
+    from datetime import datetime, timedelta
+    import jwt
+    from app.core.config import settings
+    
+    # Token expires in 1 hour
+    expiration = datetime.utcnow() + timedelta(hours=1)
+    
+    token_data = {
+        "sub": str(customer.id),
+        "impersonated_by": str(admin.id),
+        "impersonator_name": admin.full_name,
+        "impersonator_email": admin.email,
+        "exp": expiration,
+        "type": "impersonation"
+    }
+    
+    impersonation_token = jwt.encode(token_data, settings.SECRET_KEY, algorithm="HS256")
+    
+    # Log the impersonation
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="impersonate_customer",
+        resource_type="user",
+        resource_id=customer_id,
+        changes={"impersonated_user": customer.email, "impersonator": admin.email},
+        request=request,
+    )
+    
+    return {
+        "impersonation_token": impersonation_token,
+        "customer": {
+            "id": str(customer.id),
+            "name": customer.full_name,
+            "email": customer.email,
+        },
+        "expires_at": expiration.isoformat(),
+        "message": f"Now impersonating {customer.full_name}. Token expires in 1 hour."
+    }
+
+
+@router.post("/customers/stop-impersonation")
+async def stop_impersonation(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stop impersonating a customer and return to admin session.
+    """
+    from app.services.audit import log_audit
+    
+    # Log the stop impersonation
+    await log_audit(
+        db=db,
+        admin_id=str(admin.id),
+        action="stop_impersonation",
+        resource_type="user",
+        resource_id=str(admin.id),
+        changes={"admin": admin.email},
+        request=request,
+    )
+    
+    return {"message": "Impersonation stopped"}
+
+
+# --- Audit Logs ---
+@router.get("/audit-logs")
+async def list_audit_logs(
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    admin_id: str | None = None,
+    action: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List audit logs with optional filtering.
+    
+    Filters:
+    - resource_type: Filter by resource type (e.g., "user", "order")
+    - resource_id: Filter by specific resource ID
+    - admin_id: Filter by admin who performed the action
+    - action: Filter by action type (e.g., "update_customer", "reset_password")
+    - start_date: Filter logs from this date (ISO format: YYYY-MM-DD)
+    - end_date: Filter logs until this date (ISO format: YYYY-MM-DD)
+    """
+    from app.models.audit_log import AuditLog
+    import json
+    
+    query = select(AuditLog).options(selectinload(AuditLog.admin))
+    
+    # Apply filters
+    if resource_type:
+        query = query.where(AuditLog.resource_type == resource_type)
+    
+    if resource_id:
+        query = query.where(AuditLog.resource_id == resource_id)
+    
+    if admin_id:
+        try:
+            query = query.where(AuditLog.admin_id == uuid.UUID(admin_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid admin_id format")
+    
+    if action:
+        query = query.where(AuditLog.action == action)
+    
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+            query = query.where(AuditLog.created_at >= start_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+    
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            query = query.where(AuditLog.created_at <= end_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+    
+    # Order by most recent first
+    query = query.order_by(AuditLog.created_at.desc())
+    
+    # Get total count for pagination
+    count_query = select(func.count()).select_from(AuditLog)
+    if resource_type:
+        count_query = count_query.where(AuditLog.resource_type == resource_type)
+    if resource_id:
+        count_query = count_query.where(AuditLog.resource_id == resource_id)
+    if admin_id:
+        count_query = count_query.where(AuditLog.admin_id == uuid.UUID(admin_id))
+    if action:
+        count_query = count_query.where(AuditLog.action == action)
+    if start_date:
+        count_query = count_query.where(AuditLog.created_at >= start_dt)
+    if end_date:
+        count_query = count_query.where(AuditLog.created_at <= end_dt)
+    
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+    
+    # Apply pagination
+    result = await db.execute(query.offset((page - 1) * limit).limit(limit))
+    logs = result.scalars().all()
+    
+    return {
+        "logs": [
+            {
+                "id": log.id,
+                "admin_id": str(log.admin_id) if log.admin_id else None,
+                "admin_name": log.admin.full_name if log.admin else "System",
+                "admin_email": log.admin.email if log.admin else None,
+                "action": log.action,
+                "resource_type": log.resource_type,
+                "resource_id": log.resource_id,
+                "changes": json.loads(log.changes) if log.changes else None,
+                "ip_address": log.ip_address,
+                "user_agent": log.user_agent,
+                "created_at": log.created_at.isoformat(),
+            }
+            for log in logs
+        ],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit,
+        }
+    }

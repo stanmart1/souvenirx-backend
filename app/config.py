@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Firebase / FCM Push Notifications
+    firebase_credentials_path: str = ""  # Path to firebase-adminsdk JSON file
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
