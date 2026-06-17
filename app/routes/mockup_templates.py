@@ -12,7 +12,7 @@ from app.models.user import User
 from app.models.product import Product
 from app.models.logo_upload import ProductMockupTemplate
 from app.services.storage import StorageService
-from app.services.audit import log_admin_action
+from app.services.audit import log_audit
 
 router = APIRouter(prefix="/api/admin/mockups", tags=["mockup-templates"])
 
@@ -204,13 +204,13 @@ async def create_mockup_template(
     await db.refresh(mockup)
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="create_mockup_template",
         resource_type="mockup_template",
         resource_id=str(mockup.id),
-        details={
+        changes={
             "product_id": str(product.id),
             "product_name": product.name,
             "name": name,
@@ -382,13 +382,13 @@ async def update_mockup_template(
     
     # Log admin action
     if changes:
-        await log_admin_action(
+        await log_audit(
             db=db,
             admin_id=admin.id,
             action="update_mockup_template",
             resource_type="mockup_template",
             resource_id=str(mockup.id),
-            details={"changes": changes}
+            changes=changes
         )
     
     return {
@@ -422,13 +422,13 @@ async def delete_mockup_template(
     await db.commit()
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="delete_mockup_template",
         resource_type="mockup_template",
         resource_id=str(mockup.id),
-        details={"name": mockup.name, "view_type": mockup.view_type}
+        changes={"name": mockup.name, "view_type": mockup.view_type}
     )
     
     return {"message": "Mockup template deleted successfully"}
@@ -510,13 +510,13 @@ async def set_primary_mockup(
     await db.commit()
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="set_primary_mockup",
         resource_type="mockup_template",
         resource_id=str(mockup.id),
-        details={"name": mockup.name}
+        changes={"name": mockup.name}
     )
     
     return {"message": f"Mockup '{mockup.name}' set as primary"}
@@ -558,13 +558,13 @@ async def bulk_reorder_mockups(
     await db.commit()
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="bulk_reorder_mockups",
         resource_type="mockup_template",
         resource_id="bulk",
-        details={"count": updated_count}
+        changes={"count": updated_count}
     )
     
     return {

@@ -12,7 +12,7 @@ from app.middleware.auth import get_current_user, get_current_admin
 from app.models.user import User
 from app.models.design_template import DesignTemplate, CustomerDesign
 from app.models.product import Product
-from app.services.audit import log_admin_action
+from app.services.audit import log_audit
 
 router = APIRouter(prefix="/api/design-templates", tags=["design-templates"])
 
@@ -190,13 +190,13 @@ async def create_design_template(
     await db.refresh(template)
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="create_design_template",
         resource_type="design_template",
         resource_id=str(template.id),
-        details={"name": template.name, "category": template.category}
+        changes={"name": template.name, "category": template.category}
     )
     
     return {
@@ -310,13 +310,13 @@ async def update_design_template(
     
     # Log admin action
     if changes:
-        await log_admin_action(
+        await log_audit(
             db=db,
             admin_id=admin.id,
             action="update_design_template",
             resource_type="design_template",
             resource_id=str(template.id),
-            details={"changes": changes}
+            changes=changes
         )
     
     return {
@@ -374,13 +374,13 @@ async def delete_design_template(
     await db.commit()
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action=action,
         resource_type="design_template",
         resource_id=str(template.id),
-        details={"name": template.name, "hard_delete": hard_delete}
+        changes={"name": template.name, "hard_delete": hard_delete}
     )
     
     return {"message": message}
@@ -443,13 +443,13 @@ async def duplicate_design_template(
     await db.refresh(duplicate)
     
     # Log admin action
-    await log_admin_action(
+    await log_audit(
         db=db,
         admin_id=admin.id,
         action="duplicate_design_template",
         resource_type="design_template",
         resource_id=str(duplicate.id),
-        details={
+        changes={
             "original_id": str(original.id),
             "original_name": original.name,
             "new_name": new_name
