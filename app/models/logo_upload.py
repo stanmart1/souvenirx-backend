@@ -89,7 +89,7 @@ class LogoUpload(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-    user: Mapped["User"] = relationship()
+    user: Mapped["User"] = relationship(foreign_keys=[user_id])
     overlays: Mapped[list["LogoOverlayConfig"]] = relationship(back_populates="logo_upload", cascade="all, delete-orphan")
     
     __table_args__ = (
