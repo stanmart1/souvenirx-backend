@@ -1963,10 +1963,12 @@ async def export_customers_csv(
             # Yield each customer row
             for customer in customers:
                 # Escape fields that might contain commas or quotes
-                name = f'"{customer.full_name.replace('"', '""')}"' if ',' in customer.full_name or '"' in customer.full_name else customer.full_name
+                _name = customer.full_name or ""
+                name = '"' + _name.replace('"', '""') + '"' if ',' in _name or '"' in _name else _name
                 email = customer.email
                 phone = customer.phone or ""
-                tags = f'"{(customer.tags or "").replace('"', '""')}"' if customer.tags and (',' in customer.tags or '"' in customer.tags) else (customer.tags or "")
+                _tags = customer.tags or ""
+                tags = '"' + _tags.replace('"', '""') + '"' if ',' in _tags or '"' in _tags else _tags
                 status = "Active" if customer.is_active else "Inactive"
                 joined = customer.created_at.strftime("%Y-%m-%d")
                 total_orders = customer.total_orders
@@ -3873,7 +3875,7 @@ async def impersonate_customer(
     Impersonate a customer to view the site as they would see it.
     Creates a temporary session token that allows admin to act as the customer.
     """
-    from app.services.audit import log_audit
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     # Get customer
     result = await db.execute(select(User).where(User.id == customer_id))
@@ -3889,7 +3891,7 @@ async def impersonate_customer(
     # Create impersonation token (JWT with special claim)
     from datetime import datetime, timedelta
     import jwt
-    from app.core.config import settings
+    from app.config import settings
     
     # Token expires in 1 hour
     expiration = datetime.utcnow() + timedelta(hours=1)
@@ -3903,7 +3905,7 @@ async def impersonate_customer(
         "type": "impersonation"
     }
     
-    impersonation_token = jwt.encode(token_data, settings.SECRET_KEY, algorithm="HS256")
+    impersonation_token = jwt.encode(token_data, settings.jwt_secret, algorithm="HS256")
     
     # Log the impersonation
     await log_audit(
@@ -3913,7 +3915,8 @@ async def impersonate_customer(
         resource_type="user",
         resource_id=customer_id,
         changes={"impersonated_user": customer.email, "impersonator": admin.email},
-        request=request,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
     )
     
     return {

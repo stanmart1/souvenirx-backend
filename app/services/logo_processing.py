@@ -6,7 +6,6 @@ from typing import Optional, Tuple
 from PIL import Image, ImageFilter, ImageEnhance, ImageDraw
 import colorgram
 import httpx
-from rembg import remove
 import numpy as np
 
 from app.models.logo_upload import LogoOverlayConfig
@@ -112,7 +111,7 @@ class LogoProcessingService:
         transparent_content = None
         if not has_transparency:
             try:
-                # Use rembg to remove background
+                from rembg import remove
                 transparent_bytes = remove(file_content)
                 transparent_content = transparent_bytes
             except Exception as e:
