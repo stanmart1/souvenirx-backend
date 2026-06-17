@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, or_
@@ -462,7 +462,7 @@ async def list_products(
         selectinload(Product.customizations), 
         selectinload(Product.category),
         selectinload(Product.variants),
-        selectinload(Product.grouped_products)
+        selectinload(Product.product_group)
     )
     if search:
         query = query.where(or_(Product.name.ilike(f"%{search}%"), Product.description.ilike(f"%{search}%")))
@@ -503,14 +503,7 @@ async def list_products(
                 }
                 for v in p.variants
             ] if p.variants else [],
-            "groupedProducts": [
-                {
-                    "id": str(gp.id),
-                    "name": gp.name,
-                    "basePrice": gp.base_price,
-                }
-                for gp in p.grouped_products
-            ] if p.grouped_products else [],
+            "groupedProducts": [],
         }
         for p in products
     ]
@@ -779,7 +772,7 @@ async def duplicate_product(product_id: str, admin: User = Depends(get_current_a
         db.add(ProductTier(
             product_id=duplicate.id,
             min_qty=tier.min_qty,
-            price=tier.price,
+            unit_price=tier.unit_price,
         ))
     
     # Duplicate customizations
@@ -788,8 +781,8 @@ async def duplicate_product(product_id: str, admin: User = Depends(get_current_a
             product_id=duplicate.id,
             type=custom.type,
             label=custom.label,
-            required=custom.required,
-            options=custom.options,
+            max_length=custom.max_length,
+            values=custom.values,
         ))
     
     # Duplicate variants
@@ -1206,11 +1199,11 @@ async def generate_invoice(
         "status": order.status,
         "payment_status": order.payment_status,
         "customer": {
-            "name": order.user.full_name,
-            "email": order.user.email,
-            "phone": order.user.phone,
+            "name": order.user.full_name if order.user else order.customer_name,
+            "email": order.user.email if order.user else order.email,
+            "phone": order.user.phone if order.user else order.phone,
         },
-        "shipping_address": order.shipping_address,
+        "shipping_address": order.address,
         "items": [
             {
                 "product_name": item.product_name,
@@ -1223,7 +1216,6 @@ async def generate_invoice(
         "subtotal": order.subtotal,
         "shipping_fee": order.shipping_fee,
         "total": order.total,
-        "notes": order.notes,
     }
 
 
@@ -1255,19 +1247,17 @@ async def generate_packing_slip(
         "order_number": order.order_number,
         "order_date": order.created_at.isoformat(),
         "customer": {
-            "name": order.user.full_name,
-            "phone": order.user.phone,
+            "name": order.user.full_name if order.user else order.customer_name,
+            "phone": order.user.phone if order.user else order.phone,
         },
-        "shipping_address": order.shipping_address,
+        "shipping_address": order.address,
         "items": [
             {
                 "product_name": item.product_name,
                 "qty": item.qty,
-                "sku": item.variant_id or "N/A",
             }
             for item in order.items
         ],
-        "notes": order.notes,
     }
 
 
@@ -1399,7 +1389,7 @@ async def list_customers(
     query = select(
         User,
         func.count(Order.id).label('order_count'),
-        func.coalesce(func.sum(Order.total_amount), 0).label('total_spent')
+        func.coalesce(func.sum(Order.total), 0).label('total_spent')
     ).outerjoin(Order, (Order.user_id == User.id) & (Order.status == 'completed'))
     
     # Filter by customer role
@@ -1446,10 +1436,10 @@ async def list_customers(
     
     # Spending filters (applied after grouping)
     if min_spent is not None:
-        query = query.having(func.coalesce(func.sum(Order.total_amount), 0) >= min_spent)
+        query = query.having(func.coalesce(func.sum(Order.total), 0) >= min_spent)
     
     if max_spent is not None:
-        query = query.having(func.coalesce(func.sum(Order.total_amount), 0) <= max_spent)
+        query = query.having(func.coalesce(func.sum(Order.total), 0) <= max_spent)
     
     # Order by created date
     query = query.order_by(User.created_at.desc())
@@ -3088,6 +3078,29 @@ async def download_logo(
 
 
 # --- Cart Management ---
+def _cart_item_response(item) -> dict:
+    """Serialize a CartItem (with product and variant pre-loaded) to a dict."""
+    product = item.product
+    variant = item.variant
+    base_price = variant.price if variant else product.base_price
+    unit_price = base_price
+    for tier in sorted(product.tiers, key=lambda t: t.min_qty):
+        if item.qty >= tier.min_qty:
+            unit_price = tier.unit_price
+    return {
+        "id": item.id,
+        "productId": str(item.product_id),
+        "productName": product.name,
+        "qty": item.qty,
+        "unitPrice": unit_price,
+        "total": unit_price * item.qty,
+        "customization": item.customization,
+        "variantId": str(item.variant_id) if item.variant_id else None,
+        "variantAttributes": variant.attributes if variant else None,
+        "logoUrl": item.logo_url,
+    }
+
+
 @router.get("/carts")
 async def list_all_carts(
     search: str | None = None,
@@ -3940,7 +3953,7 @@ async def stop_impersonation(
     """
     Stop impersonating a customer and return to admin session.
     """
-    from app.services.audit import log_audit
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     # Log the stop impersonation
     await log_audit(
@@ -3950,7 +3963,8 @@ async def stop_impersonation(
         resource_type="user",
         resource_id=str(admin.id),
         changes={"admin": admin.email},
-        request=request,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
     )
     
     return {"message": "Impersonation stopped"}

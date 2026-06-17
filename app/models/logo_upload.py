@@ -78,7 +78,12 @@ class LogoUpload(Base):
     # Status
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     # active, archived, deleted
-    
+
+    # Moderation fields
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text)
+
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now())

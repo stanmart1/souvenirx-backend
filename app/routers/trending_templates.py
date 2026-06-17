@@ -4,8 +4,8 @@ Manages trending/featured templates for home screen
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import desc, and_, select, func, update
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -59,124 +59,163 @@ class TrendingTemplateResponse(BaseModel):
         from_attributes = True
 
 
-# Public endpoints
+# ── Public endpoints ──────────────────────────────────────────────────────────
+
 @router.get("/", response_model=List[TrendingTemplateResponse])
 async def get_trending_templates(
     limit: int = Query(10, ge=1, le=50),
     featured_only: bool = False,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get trending templates for home screen"""
     now = datetime.now(timezone.utc)
-    
-    query = db.query(TrendingTemplate).filter(
-        TrendingTemplate.is_active == True
-    )
-    
+
+    stmt = select(TrendingTemplate).where(TrendingTemplate.is_active == True)
+
     if featured_only:
-        query = query.filter(
+        stmt = stmt.where(
             and_(
                 TrendingTemplate.is_featured == True,
                 (TrendingTemplate.featured_from == None) | (TrendingTemplate.featured_from <= now),
                 (TrendingTemplate.featured_until == None) | (TrendingTemplate.featured_until >= now)
             )
         )
-    
-    templates = query.order_by(
+
+    stmt = stmt.order_by(
         desc(TrendingTemplate.display_order),
         desc(TrendingTemplate.trending_score)
-    ).limit(limit).all()
-    
+    ).limit(limit)
+
+    templates = (await db.execute(stmt)).scalars().all()
+
     return [template.to_dict() for template in templates]
 
+
+# ── Admin GET endpoints — defined BEFORE /{trending_id} to prevent shadowing ──
+
+@router.get("/admin/all", response_model=List[TrendingTemplateResponse], dependencies=[Depends(require_admin)])
+async def get_all_trending_admin(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all trending templates (Admin only)"""
+    templates = (await db.execute(
+        select(TrendingTemplate).order_by(
+            desc(TrendingTemplate.trending_score)
+        ).offset(skip).limit(limit)
+    )).scalars().all()
+
+    return [template.to_dict() for template in templates]
+
+
+@router.get("/admin/stats", dependencies=[Depends(require_admin)])
+async def get_trending_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get trending templates statistics (Admin only)"""
+    total = (await db.execute(
+        select(func.count()).select_from(TrendingTemplate)
+    )).scalar()
+
+    active = (await db.execute(
+        select(func.count()).select_from(TrendingTemplate).where(TrendingTemplate.is_active == True)
+    )).scalar()
+
+    featured = (await db.execute(
+        select(func.count()).select_from(TrendingTemplate).where(TrendingTemplate.is_featured == True)
+    )).scalar()
+
+    # Get top trending
+    top = (await db.execute(
+        select(TrendingTemplate).order_by(
+            desc(TrendingTemplate.trending_score)
+        ).limit(5)
+    )).scalars().all()
+
+    return {
+        'total': total,
+        'active': active,
+        'featured': featured,
+        'top_trending': [t.to_dict() for t in top]
+    }
+
+
+# ── Parameterised GET — after all static GET paths ───────────────────────────
 
 @router.get("/{trending_id}", response_model=TrendingTemplateResponse)
 async def get_trending_template(
     trending_id: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get a specific trending template"""
-    template = db.query(TrendingTemplate).filter(
-        TrendingTemplate.id == uuid.UUID(trending_id)
-    ).first()
-    
+    try:
+        trending_uuid = uuid.UUID(trending_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
+
+    template = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one_or_none()
+
     if not template:
         raise HTTPException(status_code=404, detail="Trending template not found")
-    
+
     return template.to_dict()
 
 
-@router.post("/{trending_id}/track-view")
-async def track_template_view(
-    trending_id: str,
-    db: Session = Depends(get_db)
+# ── POST /reset-metrics — defined BEFORE POST / to avoid route conflicts ─────
+
+@router.post("/reset-metrics", dependencies=[Depends(require_admin)])
+async def reset_trending_metrics(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Track a view for trending calculation"""
-    template = db.query(TrendingTemplate).filter(
-        TrendingTemplate.id == uuid.UUID(trending_id)
-    ).first()
-    
-    if not template:
-        raise HTTPException(status_code=404, detail="Trending template not found")
-    
-    template.view_count_24h += 1
-    
-    # Recalculate trending score
-    # Simple algorithm: (views_24h * 0.3) + (usage_7d * 0.7)
-    template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
-    
-    db.commit()
-    
-    return {"message": "View tracked"}
+    """Reset 24h and 7d metrics (Admin only - run daily)"""
+    # Reset 24h views
+    await db.execute(update(TrendingTemplate).values(view_count_24h=0))
+
+    # Decay 7d usage (reduce by 1/7 each day)
+    templates = (await db.execute(select(TrendingTemplate))).scalars().all()
+    for template in templates:
+        template.usage_count_7d = int(template.usage_count_7d * 6 / 7)
+        template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
+
+    await db.commit()
+
+    return {"message": "Metrics reset successfully"}
 
 
-@router.post("/{trending_id}/track-usage")
-async def track_template_usage(
-    trending_id: str,
-    db: Session = Depends(get_db)
-):
-    """Track a usage for trending calculation"""
-    template = db.query(TrendingTemplate).filter(
-        TrendingTemplate.id == uuid.UUID(trending_id)
-    ).first()
-    
-    if not template:
-        raise HTTPException(status_code=404, detail="Trending template not found")
-    
-    template.usage_count_7d += 1
-    
-    # Recalculate trending score
-    template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
-    
-    db.commit()
-    
-    return {"message": "Usage tracked"}
-
-
-# Admin endpoints
 @router.post("/", response_model=TrendingTemplateResponse, dependencies=[Depends(require_admin)])
 async def create_trending_template(
     template_data: TrendingTemplateCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Add a template to trending (Admin only)"""
+    try:
+        template_uuid = uuid.UUID(template_data.template_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for template_id")
+
     # Check if template exists
-    design_template = db.query(DesignTemplate).filter(
-        DesignTemplate.id == uuid.UUID(template_data.template_id)
-    ).first()
-    
+    design_template = (await db.execute(
+        select(DesignTemplate).where(DesignTemplate.id == template_uuid)
+    )).scalar_one_or_none()
+
     if not design_template:
         raise HTTPException(status_code=404, detail="Design template not found")
-    
+
     # Check if already in trending
-    existing = db.query(TrendingTemplate).filter(
-        TrendingTemplate.template_id == uuid.UUID(template_data.template_id)
-    ).first()
-    
+    existing = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.template_id == template_uuid)
+    )).scalar_one_or_none()
+
     if existing:
         raise HTTPException(status_code=400, detail="Template already in trending")
-    
+
     # Create trending template
     trending = TrendingTemplate(
         **template_data.dict(),
@@ -185,115 +224,126 @@ async def create_trending_template(
         view_count_24h=0,
         usage_count_7d=0
     )
-    
+
     db.add(trending)
-    db.commit()
-    db.refresh(trending)
-    
+    await db.commit()
+    await db.refresh(trending)
+
     return trending.to_dict()
 
+
+# ── Parameterised POST endpoints ──────────────────────────────────────────────
+
+@router.post("/{trending_id}/track-view")
+async def track_template_view(
+    trending_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Track a view for trending calculation"""
+    try:
+        trending_uuid = uuid.UUID(trending_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
+
+    template = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="Trending template not found")
+
+    template.view_count_24h += 1
+
+    # Recalculate trending score
+    # Simple algorithm: (views_24h * 0.3) + (usage_7d * 0.7)
+    template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
+
+    await db.commit()
+
+    return {"message": "View tracked"}
+
+
+@router.post("/{trending_id}/track-usage")
+async def track_template_usage(
+    trending_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Track a usage for trending calculation"""
+    try:
+        trending_uuid = uuid.UUID(trending_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
+
+    template = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="Trending template not found")
+
+    template.usage_count_7d += 1
+
+    # Recalculate trending score
+    template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
+
+    await db.commit()
+
+    return {"message": "Usage tracked"}
+
+
+# ── Admin PUT / DELETE ────────────────────────────────────────────────────────
 
 @router.put("/{trending_id}", response_model=TrendingTemplateResponse, dependencies=[Depends(require_admin)])
 async def update_trending_template(
     trending_id: str,
     template_data: TrendingTemplateUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Update a trending template (Admin only)"""
-    template = db.query(TrendingTemplate).filter(
-        TrendingTemplate.id == uuid.UUID(trending_id)
-    ).first()
-    
+    try:
+        trending_uuid = uuid.UUID(trending_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
+
+    template = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one_or_none()
+
     if not template:
         raise HTTPException(status_code=404, detail="Trending template not found")
-    
+
     # Update fields
     update_data = template_data.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(template, key, value)
-    
-    db.commit()
-    db.refresh(template)
-    
+
+    await db.commit()
+    await db.refresh(template)
+
     return template.to_dict()
 
 
 @router.delete("/{trending_id}", dependencies=[Depends(require_admin)])
 async def delete_trending_template(
     trending_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Remove a template from trending (Admin only)"""
-    template = db.query(TrendingTemplate).filter(
-        TrendingTemplate.id == uuid.UUID(trending_id)
-    ).first()
-    
+    try:
+        trending_uuid = uuid.UUID(trending_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
+
+    template = (await db.execute(
+        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one_or_none()
+
     if not template:
         raise HTTPException(status_code=404, detail="Trending template not found")
-    
+
     db.delete(template)
-    db.commit()
-    
+    await db.commit()
+
     return {"message": "Trending template removed"}
-
-
-@router.post("/reset-metrics", dependencies=[Depends(require_admin)])
-async def reset_trending_metrics(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Reset 24h and 7d metrics (Admin only - run daily)"""
-    # Reset 24h views
-    db.query(TrendingTemplate).update({
-        TrendingTemplate.view_count_24h: 0
-    })
-    
-    # Decay 7d usage (reduce by 1/7 each day)
-    templates = db.query(TrendingTemplate).all()
-    for template in templates:
-        template.usage_count_7d = int(template.usage_count_7d * 6 / 7)
-        template.trending_score = (template.view_count_24h * 0.3) + (template.usage_count_7d * 0.7)
-    
-    db.commit()
-    
-    return {"message": "Metrics reset successfully"}
-
-
-@router.get("/admin/all", response_model=List[TrendingTemplateResponse], dependencies=[Depends(require_admin)])
-async def get_all_trending_admin(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all trending templates (Admin only)"""
-    templates = db.query(TrendingTemplate).order_by(
-        desc(TrendingTemplate.trending_score)
-    ).offset(skip).limit(limit).all()
-    
-    return [template.to_dict() for template in templates]
-
-
-@router.get("/admin/stats", dependencies=[Depends(require_admin)])
-async def get_trending_stats(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get trending templates statistics (Admin only)"""
-    total = db.query(TrendingTemplate).count()
-    active = db.query(TrendingTemplate).filter(TrendingTemplate.is_active == True).count()
-    featured = db.query(TrendingTemplate).filter(TrendingTemplate.is_featured == True).count()
-    
-    # Get top trending
-    top = db.query(TrendingTemplate).order_by(
-        desc(TrendingTemplate.trending_score)
-    ).limit(5).all()
-    
-    return {
-        'total': total,
-        'active': active,
-        'featured': featured,
-        'top_trending': [t.to_dict() for t in top]
-    }
