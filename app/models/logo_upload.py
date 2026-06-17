@@ -1,5 +1,6 @@
 """Logo upload and overlay models"""
 
+import enum
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -9,6 +10,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from app.database import Base
+
+
+class LogoUploadStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
 
 
 class LogoUpload(Base):
