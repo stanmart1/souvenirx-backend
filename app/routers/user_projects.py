@@ -461,3 +461,22 @@ async def get_all_project_stats(
         'completed': completed,
         'by_product': [{'product_id': str(p[0]), 'count': p[1]} for p in by_product]
     }
+
+
+@router.delete("/admin/{project_id}", dependencies=[Depends(require_admin)])
+async def admin_delete_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete any project by ID (Admin only)"""
+    project = (
+        await db.execute(select(UserProject).where(UserProject.id == project_id))
+    ).scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await db.delete(project)
+    await db.commit()
+    return {"message": "Project deleted successfully"}

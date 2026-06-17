@@ -6,9 +6,10 @@ Product bundles, trending templates, and sample user projects
 import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from app.database import SessionLocal
+from app.database import async_session
 from app.models.product_bundle import ProductBundle
 from app.models.trending_template import TrendingTemplate
 from app.models.user_project import UserProject
@@ -17,12 +18,13 @@ from app.models.product import Product
 from app.models.user import User
 
 
-async def seed_product_bundles(db: Session):
+async def seed_product_bundles(db: AsyncSession):
     """Seed product bundles"""
     print("Seeding product bundles...")
     
     # Check if bundles already exist
-    existing = db.query(ProductBundle).first()
+    result = await db.execute(select(ProductBundle).limit(1))
+    existing = result.scalar_one_or_none()
     if existing:
         print("Product bundles already seeded")
         return
@@ -192,24 +194,26 @@ async def seed_product_bundles(db: Session):
         bundle = ProductBundle(**bundle_data)
         db.add(bundle)
     
-    db.commit()
+    await db.commit()
     print(f"✅ Seeded {len(bundles)} product bundles")
 
 
-async def seed_trending_templates(db: Session):
+async def seed_trending_templates(db: AsyncSession):
     """Seed trending templates"""
     print("Seeding trending templates...")
     
     # Check if trending templates already exist
-    existing = db.query(TrendingTemplate).first()
+    result = await db.execute(select(TrendingTemplate).limit(1))
+    existing = result.scalar_one_or_none()
     if existing:
         print("Trending templates already seeded")
         return
     
     # Get some design templates
-    templates = db.query(DesignTemplate).filter(
-        DesignTemplate.is_active == True
-    ).limit(10).all()
+    result = await db.execute(
+        select(DesignTemplate).where(DesignTemplate.is_active == True).limit(10)
+    )
+    templates = result.scalars().all()
     
     if not templates:
         print("⚠️  No design templates found. Skipping trending templates seed.")
@@ -232,32 +236,37 @@ async def seed_trending_templates(db: Session):
         trending = TrendingTemplate(**data)
         db.add(trending)
     
-    db.commit()
+    await db.commit()
     print(f"✅ Seeded {len(trending_data)} trending templates")
 
 
-async def seed_sample_user_projects(db: Session):
+async def seed_sample_user_projects(db: AsyncSession):
     """Seed sample user projects for demo"""
     print("Seeding sample user projects...")
     
     # Get a user (preferably admin for demo)
-    user = db.query(User).filter(User.role.contains('admin')).first()
+    result = await db.execute(select(User).where(User.role.contains('admin')).limit(1))
+    user = result.scalar_one_or_none()
     if not user:
-        user = db.query(User).first()
+        result = await db.execute(select(User).limit(1))
+        user = result.scalar_one_or_none()
     
     if not user:
         print("⚠️  No users found. Skipping user projects seed.")
         return
     
     # Check if projects already exist for this user
-    existing = db.query(UserProject).filter(UserProject.user_id == user.id).first()
+    result = await db.execute(select(UserProject).where(UserProject.user_id == user.id).limit(1))
+    existing = result.scalar_one_or_none()
     if existing:
         print("Sample user projects already seeded")
         return
     
     # Get some templates and products
-    templates = db.query(DesignTemplate).limit(3).all()
-    products = db.query(Product).limit(3).all()
+    result = await db.execute(select(DesignTemplate).limit(3))
+    templates = result.scalars().all()
+    result = await db.execute(select(Product).limit(3))
+    products = result.scalars().all()
     
     if not templates or not products:
         print("⚠️  Not enough templates or products. Skipping user projects seed.")
@@ -347,23 +356,23 @@ async def seed_sample_user_projects(db: Session):
         project = UserProject(**project_data)
         db.add(project)
     
-    db.commit()
+    await db.commit()
     print(f"✅ Seeded {len(projects)} sample user projects")
 
 
 async def seed_mobile_features():
     """Main seed function for mobile features"""
-    db = SessionLocal()
-    try:
-        await seed_product_bundles(db)
-        await seed_trending_templates(db)
-        await seed_sample_user_projects(db)
-        print("✅ Mobile features seeding completed!")
-    except Exception as e:
-        print(f"❌ Error seeding mobile features: {e}")
-        db.rollback()
-    finally:
-        db.close()
+    async with async_session() as db:
+        try:
+            await seed_product_bundles(db)
+            await seed_trending_templates(db)
+            await seed_sample_user_projects(db)
+            print("✅ Mobile features seeding completed!")
+        except Exception as e:
+            print(f"❌ Error seeding mobile features: {e}")
+            import traceback
+            traceback.print_exc()
+            await db.rollback()
 
 
 if __name__ == "__main__":
