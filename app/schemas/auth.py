@@ -32,6 +32,8 @@ class UserResponse(BaseModel):
     role: str  # Comma-separated roles
     active_role: str | None  # Current active role
     email_verified: bool = False
+    avatar_url: str | None = None
+    loyalty_points: int = 0
 
     model_config = {"from_attributes": True}
     
@@ -44,6 +46,7 @@ class UserResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
+    avatar_url: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):

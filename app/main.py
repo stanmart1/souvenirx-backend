@@ -26,6 +26,31 @@ async def lifespan(app: FastAPI):
     # This is idempotent — safe to run on every startup.
     await seed_email_and_sms_templates()
 
+    # Ensure design templates + mobile features (bundles, trending templates,
+    # sample user projects) are seeded. Each sub-seeder is idempotent and
+    # only inserts rows that don't already exist, so it's safe on every
+    # startup. The home screen depends on this data being present.
+    try:
+        from app.seed_design_templates import seed_design_templates
+        from app.seed_mobile_features import (
+            seed_product_bundles,
+            seed_trending_templates,
+            seed_sample_user_projects,
+        )
+        from app.database import async_session
+
+        async with async_session() as db:
+            await seed_design_templates(db)
+            await seed_product_bundles(db, auto_commit=False)
+            await seed_trending_templates(db, auto_commit=False)
+            await seed_sample_user_projects(db, auto_commit=False)
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("souvenirx").warning(
+            "Optional seeding (design templates / mobile features) failed: %s", e
+        )
+
     yield
 
 
@@ -88,6 +113,8 @@ from app.routers.product_bundles import router as product_bundles_router
 from app.routers.user_projects import router as user_projects_router
 from app.routers.trending_templates import router as trending_templates_router
 from app.routers.recommendations import router as recommendations_router
+from app.routes.loyalty import router as loyalty_router
+from app.routes.fonts import router as fonts_router
 
 app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
@@ -120,6 +147,8 @@ app.include_router(product_bundles_router, tags=["Product Bundles"])
 app.include_router(user_projects_router, tags=["User Projects"])
 app.include_router(trending_templates_router, tags=["Trending Templates"])
 app.include_router(recommendations_router, tags=["Recommendations"])
+app.include_router(loyalty_router, tags=["Loyalty"])
+app.include_router(fonts_router, tags=["Fonts"])
 
 
 @app.get("/api/health")

@@ -18,7 +18,7 @@ from app.models.product import Product
 from app.models.user import User
 
 
-async def seed_product_bundles(db: AsyncSession):
+async def seed_product_bundles(db: AsyncSession, auto_commit: bool = True):
     """Seed product bundles"""
     print("Seeding product bundles...")
     
@@ -193,12 +193,15 @@ async def seed_product_bundles(db: AsyncSession):
     for bundle_data in bundles:
         bundle = ProductBundle(**bundle_data)
         db.add(bundle)
-    
-    await db.commit()
+
+    if auto_commit:
+        await db.commit()
+    else:
+        await db.flush()
     print(f"✅ Seeded {len(bundles)} product bundles")
 
 
-async def seed_trending_templates(db: AsyncSession):
+async def seed_trending_templates(db: AsyncSession, auto_commit: bool = True):
     """Seed trending templates"""
     print("Seeding trending templates...")
     
@@ -235,12 +238,15 @@ async def seed_trending_templates(db: AsyncSession):
     for data in trending_data:
         trending = TrendingTemplate(**data)
         db.add(trending)
-    
-    await db.commit()
+
+    if auto_commit:
+        await db.commit()
+    else:
+        await db.flush()
     print(f"✅ Seeded {len(trending_data)} trending templates")
 
 
-async def seed_sample_user_projects(db: AsyncSession):
+async def seed_sample_user_projects(db: AsyncSession, auto_commit: bool = True):
     """Seed sample user projects for demo"""
     print("Seeding sample user projects...")
     
@@ -355,8 +361,11 @@ async def seed_sample_user_projects(db: AsyncSession):
     for project_data in projects:
         project = UserProject(**project_data)
         db.add(project)
-    
-    await db.commit()
+
+    if auto_commit:
+        await db.commit()
+    else:
+        await db.flush()
     print(f"✅ Seeded {len(projects)} sample user projects")
 
 

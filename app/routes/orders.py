@@ -14,7 +14,7 @@ from app.middleware.auth import get_current_user, get_optional_user, get_guest_o
 from app.models.user import User
 from app.models.guest_session import GuestSession
 from app.models.order import Order, OrderItem, OrderTracking, OrderStatus, PaymentStatus
-from app.models.product import Product, ProductTier
+from app.models.product import Product, ProductTier, ProductImage
 from app.models.cart import CartItem
 from app.models.delivery import DeliveryZone
 from app.models.promo import PromoCode
@@ -300,7 +300,9 @@ async def list_orders(
 
     result = await db.execute(
         query
-        .options(selectinload(Order.items))
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.product).selectinload(Product.images)
+        )
         .order_by(Order.created_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
@@ -566,6 +568,14 @@ async def reorder_items(
 
 
 def _order_summary(o: Order) -> dict:
+    images = []
+    for item in o.items:
+        if item.product and item.product.images:
+            for img in item.product.images:
+                if img.url not in images:
+                    images.append(img.url)
+        if item.design_preview_url and item.design_preview_url not in images:
+            images.append(item.design_preview_url)
     return {
         "id": o.order_number,
         "customer": o.customer_name,
@@ -574,6 +584,8 @@ def _order_summary(o: Order) -> dict:
         "status": o.status,
         "date": o.created_at.strftime("%Y-%m-%d"),
         "payment_status": o.payment_status,
+        "estimatedDelivery": o.estimated_delivery,
+        "images": images[:5],
     }
 
 

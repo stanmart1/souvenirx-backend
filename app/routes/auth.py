@@ -55,6 +55,12 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     db.add(user)
     await db.flush()
 
+    from app.routes.loyalty import award_points, get_rule_value
+    signup_bonus = await get_rule_value(db, "signup_bonus")
+    if signup_bonus and signup_bonus > 0:
+        await award_points(db, user.id, signup_bonus, "signup",
+                           f"Welcome bonus: {signup_bonus} points for signing up")
+
     # Send verification email
     try:
         from app.services.email import send_verification_email
@@ -291,6 +297,8 @@ async def update_me(
         user.full_name = req.full_name
     if req.phone is not None:
         user.phone = req.phone
+    if req.avatar_url is not None:
+        user.avatar_url = req.avatar_url
     await db.flush()
     return user
 

@@ -23,6 +23,7 @@ from app.models.audit_log import AuditLog
 from app.models.product_bundle import ProductBundle
 from app.models.user_project import UserProject
 from app.models.trending_template import TrendingTemplate
+from app.models.design_font import DesignFont
 
 __all__ = [
     "User", "Address",
@@ -50,4 +51,5 @@ __all__ = [
     "ProductBundle",
     "UserProject",
     "TrendingTemplate",
+    "DesignFont",
 ]

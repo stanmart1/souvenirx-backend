@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select, func, or_
+from pydantic import BaseModel
+from sqlalchemy import select, func, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -379,7 +380,8 @@ async def list_categories(admin: User = Depends(get_current_admin), db: AsyncSes
     return [
         {
             "id": c.id, "slug": c.slug, "name": c.name,
-            "icon": c.icon, "sort_order": c.sort_order,
+            "icon": c.icon, "image": c.image, "description": c.description,
+            "sort_order": c.sort_order,
             "product_count": len(c.products) if c.products else 0
         }
         for c in categories
@@ -396,6 +398,8 @@ async def create_category(
         slug=body["slug"],
         name=body["name"],
         icon=body.get("icon", "📦"),
+        image=body.get("image"),
+        description=body.get("description"),
         sort_order=body.get("sort_order", 0),
     )
     db.add(category)
@@ -419,6 +423,10 @@ async def update_category(
         category.name = body["name"]
     if "icon" in body:
         category.icon = body["icon"]
+    if "image" in body:
+        category.image = body["image"]
+    if "description" in body:
+        category.description = body["description"]
     if "sort_order" in body:
         category.sort_order = body["sort_order"]
 
@@ -997,6 +1005,18 @@ async def update_order_status(
     description = body.description or f"Status updated to {new_status}"
     db.add(OrderTracking(order_id=order.id, status=order.status, description=description))
     await db.flush()
+
+    if new_status == OrderStatus.delivered.value and order.user_id:
+        from app.routes.loyalty import award_points, get_rule_value
+        earn_rate = await get_rule_value(db, "earn_per_kobo")
+        if earn_rate and earn_rate > 0 and order.total > 0:
+            points = order.total // earn_rate
+            if points > 0:
+                await award_points(
+                    db, order.user_id, points, "order",
+                    f"Earned {points} points from order {order.order_number}",
+                    order_number=order.order_number,
+                )
 
     # In-app notification
     if order.user_id and new_status:
@@ -4079,3 +4099,406 @@ async def list_audit_logs(
             "pages": (total + limit - 1) // limit,
         }
     }
+
+
+# --- Loyalty Management ---
+@router.get("/loyalty/stats")
+async def loyalty_stats(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyTransaction, LoyaltyRule
+
+    total_issued_result = await db.execute(
+        select(func.coalesce(func.sum(LoyaltyTransaction.points), 0)).where(
+            LoyaltyTransaction.points > 0
+        )
+    )
+    total_issued = total_issued_result.scalar() or 0
+
+    total_redeemed_result = await db.execute(
+        select(func.coalesce(func.sum(func.abs(LoyaltyTransaction.points)), 0)).where(
+            LoyaltyTransaction.points < 0
+        )
+    )
+    total_redeemed = total_redeemed_result.scalar() or 0
+
+    users_with_points_result = await db.execute(
+        select(func.count()).where(User.loyalty_points > 0)
+    )
+    active_users = users_with_points_result.scalar() or 0
+
+    total_transactions_result = await db.execute(
+        select(func.count()).select_from(LoyaltyTransaction)
+    )
+    total_transactions = total_transactions_result.scalar() or 0
+
+    return {
+        "total_issued": total_issued,
+        "total_redeemed": total_redeemed,
+        "active_users": active_users,
+        "total_transactions": total_transactions,
+    }
+
+
+@router.get("/loyalty/transactions")
+async def loyalty_transactions_admin(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    type_filter: str | None = Query(None),
+    search: str | None = Query(None),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyTransaction
+
+    query = select(LoyaltyTransaction).options(selectinload(LoyaltyTransaction.user))
+    count_query = select(func.count()).select_from(LoyaltyTransaction)
+
+    if type_filter:
+        query = query.where(LoyaltyTransaction.type == type_filter)
+        count_query = count_query.where(LoyaltyTransaction.type == type_filter)
+
+    if search:
+        search_filter = or_(
+            User.full_name.ilike(f"%{search}%"),
+            User.email.ilike(f"%{search}%"),
+            LoyaltyTransaction.description.ilike(f"%{search}%"),
+        )
+        query = query.join(User, LoyaltyTransaction.user_id == User.id).where(search_filter)
+        count_query = count_query.join(User, LoyaltyTransaction.user_id == User.id).where(search_filter)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        query.order_by(desc(LoyaltyTransaction.created_at))
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    transactions = result.scalars().all()
+
+    return {
+        "transactions": [
+            {
+                "id": tx.id,
+                "user_id": str(tx.user_id),
+                "user_name": tx.user.full_name if tx.user else None,
+                "user_email": tx.user.email if tx.user else None,
+                "points": tx.points,
+                "type": tx.type,
+                "description": tx.description,
+                "order_number": tx.order_number,
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+            }
+            for tx in transactions
+        ],
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit,
+    }
+
+
+class LoyaltyAdjustRequest(BaseModel):
+    user_id: str
+    points: int
+    description: str = "Manual adjustment"
+
+
+@router.post("/loyalty/adjust")
+async def adjust_loyalty_points(
+    body: LoyaltyAdjustRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.routes.loyalty import award_points
+
+    try:
+        user_id = uuid.UUID(body.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await award_points(
+        db, user_id, body.points, "adjustment",
+        body.description or f"Manual adjustment by admin",
+    )
+
+    return {"message": f"{'Added' if body.points > 0 else 'Deducted'} {abs(body.points)} points for {user.full_name}"}
+
+
+class LoyaltyRuleCreate(BaseModel):
+    name: str
+    type: str
+    value: int
+    description: str | None = None
+    is_active: bool = True
+
+
+class LoyaltyRuleUpdate(BaseModel):
+    name: str | None = None
+    value: int | None = None
+    description: str | None = None
+    is_active: bool | None = None
+
+
+@router.get("/loyalty/rules")
+async def list_loyalty_rules(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyRule
+
+    result = await db.execute(select(LoyaltyRule).order_by(LoyaltyRule.id))
+    rules = result.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "type": r.type,
+            "value": r.value,
+            "is_active": r.is_active,
+            "description": r.description,
+        }
+        for r in rules
+    ]
+
+
+@router.post("/loyalty/rules")
+async def create_loyalty_rule(
+    body: LoyaltyRuleCreate,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyRule
+
+    existing = await db.execute(
+        select(LoyaltyRule).where(LoyaltyRule.type == body.type)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Rule type '{body.type}' already exists")
+
+    rule = LoyaltyRule(
+        name=body.name,
+        type=body.type,
+        value=body.value,
+        is_active=body.is_active,
+        description=body.description,
+    )
+    db.add(rule)
+    await db.flush()
+    return {"id": rule.id, "name": rule.name, "type": rule.type, "value": rule.value}
+
+
+@router.put("/loyalty/rules/{rule_id}")
+async def update_loyalty_rule(
+    rule_id: int,
+    body: LoyaltyRuleUpdate,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyRule
+
+    result = await db.execute(select(LoyaltyRule).where(LoyaltyRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    if body.name is not None:
+        rule.name = body.name
+    if body.value is not None:
+        rule.value = body.value
+    if body.description is not None:
+        rule.description = body.description
+    if body.is_active is not None:
+        rule.is_active = body.is_active
+    await db.flush()
+    return {"id": rule.id, "name": rule.name, "value": rule.value, "is_active": rule.is_active}
+
+
+@router.delete("/loyalty/rules/{rule_id}")
+async def delete_loyalty_rule(
+    rule_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.loyalty import LoyaltyRule
+
+    result = await db.execute(select(LoyaltyRule).where(LoyaltyRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    await db.delete(rule)
+    await db.flush()
+    return {"message": "Rule deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Design Fonts (font catalogue used by product customisation flow)
+# ---------------------------------------------------------------------------
+
+
+class FontCreateRequest(BaseModel):
+    name: str
+    display_name: str
+    category: str
+    source_type: str = "google"  # google | custom
+    file_url: str | None = None
+    preview_text: str = "AaBbCc 123"
+    sample_image_url: str | None = None
+    is_active: bool = True
+    is_premium: bool = False
+    sort_order: int = 0
+
+
+class FontUpdateRequest(BaseModel):
+    name: str | None = None
+    display_name: str | None = None
+    category: str | None = None
+    source_type: str | None = None
+    file_url: str | None = None
+    preview_text: str | None = None
+    sample_image_url: str | None = None
+    is_active: bool | None = None
+    is_premium: bool | None = None
+    sort_order: int | None = None
+
+
+def _font_to_dict(f) -> dict:
+    return {
+        "id": f.id,
+        "name": f.name,
+        "display_name": f.display_name,
+        "category": f.category,
+        "source_type": f.source_type,
+        "file_url": f.file_url,
+        "preview_text": f.preview_text,
+        "sample_image_url": f.sample_image_url,
+        "is_active": f.is_active,
+        "is_premium": f.is_premium,
+        "sort_order": f.sort_order,
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+    }
+
+
+@router.get("/fonts")
+async def admin_list_fonts(
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500),
+    category: str | None = Query(None),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.design_font import DesignFont
+
+    base = select(DesignFont)
+    count_base = select(func.count()).select_from(DesignFont)
+    if category:
+        base = base.where(DesignFont.category == category)
+        count_base = count_base.where(DesignFont.category == category)
+
+    total = (await db.execute(count_base)).scalar() or 0
+
+    result = await db.execute(
+        base.order_by(DesignFont.sort_order.asc(), DesignFont.id.asc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    fonts = result.scalars().all()
+
+    return {
+        "items": [_font_to_dict(f) for f in fonts],
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit,
+    }
+
+
+@router.post("/fonts")
+async def admin_create_font(
+    body: FontCreateRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.design_font import DesignFont
+
+    if body.source_type not in ("google", "custom"):
+        raise HTTPException(status_code=400, detail="source_type must be 'google' or 'custom'")
+    if body.source_type == "custom" and not body.file_url:
+        raise HTTPException(status_code=400, detail="Custom fonts require file_url")
+
+    existing = await db.execute(
+        select(DesignFont).where(DesignFont.name == body.name)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Font with name '{body.name}' already exists")
+
+    font = DesignFont(
+        name=body.name,
+        display_name=body.display_name,
+        category=body.category,
+        source_type=body.source_type,
+        file_url=body.file_url,
+        preview_text=body.preview_text or "AaBbCc 123",
+        sample_image_url=body.sample_image_url,
+        is_active=body.is_active,
+        is_premium=body.is_premium,
+        sort_order=body.sort_order,
+    )
+    db.add(font)
+    await db.flush()
+    return _font_to_dict(font)
+
+
+@router.put("/fonts/{font_id}")
+async def admin_update_font(
+    font_id: int,
+    body: FontUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.design_font import DesignFont
+
+    result = await db.execute(select(DesignFont).where(DesignFont.id == font_id))
+    font = result.scalar_one_or_none()
+    if not font:
+        raise HTTPException(status_code=404, detail="Font not found")
+
+    if body.source_type is not None and body.source_type not in ("google", "custom"):
+        raise HTTPException(status_code=400, detail="source_type must be 'google' or 'custom'")
+
+    for field in (
+        "name", "display_name", "category", "source_type",
+        "file_url", "preview_text", "sample_image_url",
+        "is_active", "is_premium", "sort_order",
+    ):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(font, field, value)
+
+    await db.flush()
+    return _font_to_dict(font)
+
+
+@router.delete("/fonts/{font_id}")
+async def admin_delete_font(
+    font_id: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.design_font import DesignFont
+
+    result = await db.execute(select(DesignFont).where(DesignFont.id == font_id))
+    font = result.scalar_one_or_none()
+    if not font:
+        raise HTTPException(status_code=404, detail="Font not found")
+
+    await db.delete(font)
+    await db.flush()
+    return {"message": "Font deleted"}

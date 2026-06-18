@@ -3,7 +3,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Boolean, ForeignKey, DateTime, func
+from sqlalchemy import String, Boolean, ForeignKey, DateTime, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -32,6 +32,8 @@ class User(Base):
     verification_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     tags: Mapped[Optional[str]] = mapped_column(String(500))  # Comma-separated tags for segmentation
     fcm_token: Mapped[Optional[str]] = mapped_column(String(500))  # Firebase Cloud Messaging device token
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
+    loyalty_points: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     addresses: Mapped[list["Address"]] = relationship(back_populates="user", cascade="all, delete-orphan")

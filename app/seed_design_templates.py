@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.database import async_session_maker
+from app.database import async_session
 from app.models.design_template import DesignTemplate
 from app.models.user import User
 
@@ -623,74 +623,88 @@ SAMPLE_TEMPLATES = [
 ]
 
 
-async def seed_design_templates():
-    """Seed the database with sample design templates"""
-    async with async_session_maker() as session:
-        try:
-            # Get first admin user to set as creator
+async def seed_design_templates(db: AsyncSession | None = None):
+    """Seed the database with sample design templates.
+
+    When called without a session (e.g. as a standalone script) it opens its
+    own. The main seed() passes its own session so everything runs inside a
+    single transaction on startup.
+    """
+    owns_session = db is None
+    if owns_session:
+        ctx = async_session()
+        session = await ctx.__aenter__()
+    else:
+        session = db
+    try:
+        # Get first admin user to set as creator
+        result = await session.execute(
+            select(User).where(User.role == "admin").limit(1)
+        )
+        admin = result.scalar_one_or_none()
+
+        if not admin:
+            print("❌ No admin user found. Please create an admin user first.")
+            return
+
+        print(f"📝 Seeding design templates (created by: {admin.email})...")
+
+        created_count = 0
+        skipped_count = 0
+
+        for template_data in SAMPLE_TEMPLATES:
+            # Check if template already exists
             result = await session.execute(
-                select(User).where(User.role == "admin").limit(1)
+                select(DesignTemplate).where(DesignTemplate.slug == template_data['slug'])
             )
-            admin = result.scalar_one_or_none()
-            
-            if not admin:
-                print("❌ No admin user found. Please create an admin user first.")
-                return
-            
-            print(f"📝 Seeding design templates (created by: {admin.email})...")
-            
-            created_count = 0
-            skipped_count = 0
-            
-            for template_data in SAMPLE_TEMPLATES:
-                # Check if template already exists
-                result = await session.execute(
-                    select(DesignTemplate).where(DesignTemplate.slug == template_data['slug'])
-                )
-                existing = result.scalar_one_or_none()
-                
-                if existing:
-                    print(f"  ⏭️  Skipping '{template_data['name']}' (already exists)")
-                    skipped_count += 1
-                    continue
-                
-                # Create new template
-                template = DesignTemplate(
-                    id=uuid.uuid4(),
-                    name=template_data['name'],
-                    slug=template_data['slug'],
-                    description=template_data['description'],
-                    category=template_data['category'],
-                    style=template_data['style'],
-                    tags=template_data['tags'],
-                    design_data=template_data['design_data'],
-                    thumbnail_url=template_data['thumbnail_url'],
-                    preview_images=template_data['preview_images'],
-                    compatible_products=template_data['compatible_products'],
-                    is_premium=template_data['is_premium'],
-                    premium_price=template_data['premium_price'],
-                    is_featured=template_data['is_featured'],
-                    created_by=admin.id,
-                    is_active=True,
-                    usage_count=0,
-                    popularity_score=0.0
-                )
-                
-                session.add(template)
-                created_count += 1
-                print(f"  ✅ Created '{template_data['name']}'")
-            
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                print(f"  ⏭️  Skipping '{template_data['name']}' (already exists)")
+                skipped_count += 1
+                continue
+
+            # Create new template
+            template = DesignTemplate(
+                id=uuid.uuid4(),
+                name=template_data['name'],
+                slug=template_data['slug'],
+                description=template_data['description'],
+                category=template_data['category'],
+                style=template_data['style'],
+                tags=template_data['tags'],
+                design_data=template_data['design_data'],
+                thumbnail_url=template_data['thumbnail_url'],
+                preview_images=template_data['preview_images'],
+                compatible_products=template_data['compatible_products'],
+                is_premium=template_data['is_premium'],
+                premium_price=template_data['premium_price'],
+                is_featured=template_data['is_featured'],
+                created_by=admin.id,
+                is_active=True,
+                usage_count=0,
+                popularity_score=0.0
+            )
+
+            session.add(template)
+            created_count += 1
+            print(f"  ✅ Created '{template_data['name']}'")
+
+        if owns_session:
             await session.commit()
-            
-            print(f"\n✨ Design template seeding complete!")
-            print(f"   Created: {created_count}")
-            print(f"   Skipped: {skipped_count}")
-            print(f"   Total: {len(SAMPLE_TEMPLATES)}")
-            
-        except Exception as e:
+
+        print(f"\n✨ Design template seeding complete!")
+        print(f"   Created: {created_count}")
+        print(f"   Skipped: {skipped_count}")
+        print(f"   Total: {len(SAMPLE_TEMPLATES)}")
+
+    except Exception:
+        if owns_session:
             await session.rollback()
-            print(f"\n❌ Error seeding design templates: {str(e)}")
-            raise
+        raise
+    finally:
+        if owns_session:
+            await ctx.__aexit__(None, None, None)
 
 
 async def main():

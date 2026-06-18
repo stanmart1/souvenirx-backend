@@ -88,6 +88,8 @@ async def seed():
             ("plaques",    "Engraved Plaques",  "Award",       4),
             ("cards",      "Greeting Cards",    "Mail",        5),
             ("wristbands", "Wristbands",        "Watch",       6),
+            ("keychains",  "Keychains",         "Key",         7),
+            ("stickers",   "Stickers",          "StickyNote",  8),
         ]
         cat_map = {}
         for slug, name, icon, sort in categories_data:

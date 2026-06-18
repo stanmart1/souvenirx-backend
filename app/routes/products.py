@@ -55,7 +55,7 @@ async def list_categories(db: AsyncSession = Depends(get_db)):
 
     result = await db.execute(select(Category).order_by(Category.sort_order))
     cats = result.scalars().all()
-    response = [{"id": c.id, "slug": c.slug, "name": c.name, "icon": c.icon} for c in cats]
+    response = [{"id": c.id, "slug": c.slug, "name": c.name, "icon": c.icon, "image": c.image, "description": c.description} for c in cats]
 
     await cache_set("categories:list", response, ex=600)
     
