@@ -29,6 +29,7 @@ from app.services.notifications import (
     notify_payout_processed,
 )
 from app.schemas.ad import AdCreate, AdUpdate
+from app.schemas.auth import AdminCreateUserRequest
 from app.schemas.email_template import EmailTemplateCreate, EmailTemplateUpdate
 from app.schemas.product import ProductCreate, ProductUpdate
 from app.schemas.payment import (
@@ -3547,6 +3548,85 @@ async def track_ad_click(
 
 
 # --- User Management ---
+@router.post("/users")
+async def admin_create_user(
+    body: AdminCreateUserRequest,
+    request: Request = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new user account from the admin dashboard.
+
+    Admin-created accounts are marked ``email_verified=True`` and
+    ``created_by_admin=True`` so the user can log in on the mobile app and
+    web without going through the OTP / email-verification flow.  The admin
+    already vouched for the address when they entered it.
+    """
+    from app.services.auth import hash_password
+    from app.services.audit import log_audit, get_client_ip, get_user_agent
+    from app.schemas.auth import UserResponse
+
+    ALLOWED_ROLES = {"customer", "affiliate", "admin"}
+    if not body.roles:
+        raise HTTPException(status_code=400, detail="At least one role is required")
+    invalid = set(body.roles) - ALLOWED_ROLES
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role(s): {sorted(invalid)}. Allowed: {sorted(ALLOWED_ROLES)}",
+        )
+    # Only super-admins may mint new admins.
+    if "admin" in body.roles and not admin.has_role("admin"):
+        raise HTTPException(status_code=403, detail="Only super-admins can create admin accounts")
+
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        full_name=body.full_name,
+        phone=body.phone,
+        role=",".join(body.roles),
+        active_role=body.roles[0],
+        # KEY: admin-created accounts skip the OTP / email-verification step.
+        email_verified=True,
+        created_by_admin=True,
+        verification_token=None,
+        verification_token_expires_at=None,
+    )
+    db.add(user)
+    await db.flush()
+
+    # Optional welcome email (admin explicitly opted in).
+    if body.send_welcome_email:
+        try:
+            from app.services.email import send_welcome_email
+            await send_welcome_email(user.email, user.full_name, db)
+        except Exception as e:
+            print(f"Failed to send admin-provisioned welcome email: {e}")
+
+    try:
+        await log_audit(
+            db=db,
+            admin_id=admin.id,
+            action="admin_create_user",
+            target_type="user",
+            target_id=str(user.id),
+            details={"email": user.email, "roles": body.roles},
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+        )
+    except Exception:
+        pass
+
+    return UserResponse.model_validate(user).model_dump()
+
+
 @router.get("/users")
 async def list_all_users(
     search: str | None = None,
