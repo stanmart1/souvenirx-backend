@@ -57,7 +57,7 @@ DEFAULT_EMAIL_TEMPLATES = [
                             <h2 style="margin:0 0 8px;color:#1a1a1a;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Verify Your Email Address</h2>
                             <p style="margin:0 0 28px;color:#888888;font-size:14px;">One last step to activate your account</p>
                             <p style="margin:0 0 20px;color:#444444;font-size:16px;line-height:1.7;">Hi <strong>{{customer_name}}</strong>,</p>
-                            <p style="margin:0 0 28px;color:#555555;font-size:16px;line-height:1.7;">Thanks for signing up at SouvenirX! Please verify your email address by clicking the button below. <strong>This link expires in 24 hours</strong> for your security.</p>
+                            <p style="margin:0 0 28px;color:#555555;font-size:16px;line-height:1.7;">Thanks for signing up at SouvenirX! Please verify your email address by clicking the button below or entering the 6-digit code in the mobile app. <strong>This link and code expire in 24 hours</strong> for your security.</p>
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 32px;">
                                 <tr>
                                     <td style="text-align:center;">
@@ -65,6 +65,7 @@ DEFAULT_EMAIL_TEMPLATES = [
                                     </td>
                                 </tr>
                             </table>
+                            {{otp_block}}
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color:#fdf8f5;border:1px solid #f0e4db;border-radius:8px;margin:0 0 28px;">
                                 <tr>
                                     <td style="padding:16px 20px;">
@@ -76,7 +77,7 @@ DEFAULT_EMAIL_TEMPLATES = [
                             <p style="margin:0;color:#aaaaaa;font-size:14px;line-height:1.6;">If you did not create an account, you can safely ignore this email.</p>
                         </td>
                     </tr>""" + _FOOTER + _WRAPPER_CLOSE,
-        "variables": {"customer_name": "string", "verification_url": "string"},
+        "variables": {"customer_name": "string", "verification_url": "string", "otp_block": "string"},
         "is_active": True,
     },
 

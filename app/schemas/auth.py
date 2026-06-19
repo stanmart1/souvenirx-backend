@@ -34,6 +34,7 @@ class UserResponse(BaseModel):
     email_verified: bool = False
     avatar_url: str | None = None
     loyalty_points: int = 0
+    created_by_admin: bool = False
 
     model_config = {"from_attributes": True}
     
@@ -49,9 +50,25 @@ class UpdateProfileRequest(BaseModel):
     avatar_url: str | None = None
 
 
+class AdminCreateUserRequest(BaseModel):
+    """Body for POST /admin/users — creates a user with OTP bypass."""
+    email: EmailStr
+    password: str
+    full_name: str
+    phone: str | None = None
+    roles: list[str] = ["customer"]  # subset of ["customer", "affiliate", "admin"]
+    send_welcome_email: bool = False
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class VerifyOtpRequest(BaseModel):
+    """Mobile-app OTP verification body (6-digit numeric code)."""
+    email: EmailStr
+    otp: str
 
 
 class ForgotPasswordRequest(BaseModel):

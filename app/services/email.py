@@ -185,14 +185,28 @@ async def send_welcome_email(to: str, name: str, db=None):
     await send_templated_email("welcome", to, variables, db)
 
 
-async def send_verification_email(to: str, name: str, token: str, db=None):
-    """Send email verification link using template."""
+async def send_verification_email(to: str, name: str, token: str, db=None, otp: str | None = None):
+    """Send email verification link (and optional 6-digit OTP for mobile) using template."""
     from app.config import settings as cfg
     verification_url = f"{cfg.frontend_url}/verify-email?token={token}"
+    if otp:
+        otp_block = (
+            '<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" '
+            'style="background-color:#fff5ee;border:1px solid #f0e4db;border-radius:8px;margin:0 0 28px;">'
+            '<tr><td style="padding:20px;text-align:center;">'
+            '<p style="margin:0 0 10px;color:#888888;font-size:12px;text-transform:uppercase;'
+            'letter-spacing:0.8px;font-weight:600;">Mobile app verification code</p>'
+            f'<p style="margin:0;color:#c4673a;font-size:32px;font-weight:800;letter-spacing:8px;">{otp}</p>'
+            '<p style="margin:10px 0 0;color:#888888;font-size:12px;">Enter this 6-digit code in the SouvenirX mobile app.</p>'
+            '</td></tr></table>'
+        )
+    else:
+        otp_block = ""
     variables = {
         "customer_name": name,
         "verification_url": verification_url,
         "frontend_url": cfg.frontend_url,
+        "otp_block": otp_block,
     }
     await send_templated_email("email_verification", to, variables, db)
 

@@ -30,10 +30,13 @@ class User(Base):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_token: Mapped[Optional[str]] = mapped_column(String(255))
     verification_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    email_otp: Mapped[Optional[str]] = mapped_column(String(8))
+    email_otp_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     tags: Mapped[Optional[str]] = mapped_column(String(500))  # Comma-separated tags for segmentation
     fcm_token: Mapped[Optional[str]] = mapped_column(String(500))  # Firebase Cloud Messaging device token
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
     loyalty_points: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     addresses: Mapped[list["Address"]] = relationship(back_populates="user", cascade="all, delete-orphan")

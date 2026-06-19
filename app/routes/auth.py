@@ -13,7 +13,7 @@ from app.models.order import Order
 from app.schemas.auth import (
     RegisterRequest, LoginRequest, TokenResponse, RefreshRequest,
     UserResponse, UpdateProfileRequest, ChangePasswordRequest,
-    ForgotPasswordRequest, ResetPasswordRequest,
+    ForgotPasswordRequest, ResetPasswordRequest, VerifyOtpRequest,
     AddressCreate, AddressUpdate,
 )
 from app.services.auth import (
@@ -31,7 +31,11 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     """Customer registration - creates user with 'customer' role"""
     import secrets
     from datetime import timedelta, timezone
-    
+
+    def _generate_otp() -> str:
+        """6-digit numeric OTP for the mobile verification flow."""
+        return f"{secrets.randbelow(1_000_000):06d}"
+
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:register:{client_ip}", 5, 300):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please wait.")
@@ -39,9 +43,11 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Generate verification token with 24-hour expiration
+    # Generate URL token (web click-link) + numeric OTP (mobile entry).
     verification_token = secrets.token_urlsafe(32)
-    
+    otp = _generate_otp()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
     user = User(
         email=req.email,
         password_hash=hash_password(req.password),
@@ -50,7 +56,11 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         role="customer",  # Explicitly set role
         email_verified=False,
         verification_token=verification_token,
-        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        verification_token_expires_at=expires_at,
+        email_otp=otp,
+        email_otp_expires_at=expires_at,
+        # Self-signup users are NOT admin-created; OTP verification required.
+        created_by_admin=False,
     )
     db.add(user)
     await db.flush()
@@ -61,10 +71,10 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         await award_points(db, user.id, signup_bonus, "signup",
                            f"Welcome bonus: {signup_bonus} points for signing up")
 
-    # Send verification email
+    # Send verification email with both click-link and numeric OTP.
     try:
         from app.services.email import send_verification_email
-        await send_verification_email(user.email, user.full_name, verification_token, db)
+        await send_verification_email(user.email, user.full_name, verification_token, db, otp=otp)
     except Exception as e:
         print(f"Failed to send verification email: {e}")
 
@@ -80,7 +90,10 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     import secrets
     from datetime import timedelta, timezone
     from app.models.affiliate import Affiliate
-    
+
+    def _generate_otp() -> str:
+        return f"{secrets.randbelow(1_000_000):06d}"
+
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:affiliate_register:{client_ip}", 5, 300):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please wait.")
@@ -88,9 +101,10 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Generate verification token with 24-hour expiration
     verification_token = secrets.token_urlsafe(32)
-    
+    otp = _generate_otp()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
     user = User(
         email=req.email,
         password_hash=hash_password(req.password),
@@ -99,11 +113,14 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
         role="affiliate",  # Set role as affiliate
         email_verified=False,
         verification_token=verification_token,
-        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        verification_token_expires_at=expires_at,
+        email_otp=otp,
+        email_otp_expires_at=expires_at,
+        created_by_admin=False,
     )
     db.add(user)
     await db.flush()
-    
+
     # Create affiliate record
     affiliate = Affiliate(
         user_id=user.id,
@@ -113,10 +130,10 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     db.add(affiliate)
     await db.flush()
 
-    # Send verification email
+    # Send verification email with both click-link and numeric OTP.
     try:
         from app.services.email import send_verification_email
-        await send_verification_email(user.email, user.full_name, verification_token, db)
+        await send_verification_email(user.email, user.full_name, verification_token, db, otp=otp)
     except Exception as e:
         print(f"Failed to send verification email: {e}")
 
@@ -152,6 +169,8 @@ async def verify_email(token: str, request: Request, db: AsyncSession = Depends(
     user.email_verified = True
     user.verification_token = None
     user.verification_token_expires_at = None
+    user.email_otp = None
+    user.email_otp_expires_at = None
     await db.commit()
 
     # Send welcome email now that the address is confirmed
@@ -166,27 +185,94 @@ async def verify_email(token: str, request: Request, db: AsyncSession = Depends(
 
 @router.post("/resend-verification")
 async def resend_verification(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Resend verification email"""
+    """Resend verification email (new URL token + new numeric OTP)."""
     import secrets
     from datetime import timedelta, timezone
-    
+
     if user.email_verified:
         raise HTTPException(status_code=400, detail="Email already verified")
-    
-    # Generate new verification token with 24-hour expiration
+
     verification_token = secrets.token_urlsafe(32)
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
     user.verification_token = verification_token
-    user.verification_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    user.verification_token_expires_at = expires_at
+    user.email_otp = otp
+    user.email_otp_expires_at = expires_at
     await db.commit()
-    
-    # Send verification email
+
     try:
         from app.services.email import send_verification_email
-        await send_verification_email(user.email, user.full_name, verification_token, db)
+        await send_verification_email(user.email, user.full_name, verification_token, db, otp=otp)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to send verification email")
-    
+
     return {"message": "Verification email sent"}
+
+
+@router.post("/verify-otp")
+async def verify_otp(
+    req: VerifyOtpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify a user's email with a 6-digit numeric OTP.
+
+    Used by the mobile app's EmailVerificationScreen. The web app uses
+    :func:`verify_email` with a URL token instead. Both paths set
+    ``email_verified=True`` and clear the outstanding credentials.
+    """
+    from datetime import timezone
+
+    # Rate limit: 5 OTP attempts per 5 minutes per IP.
+    client_ip = request.client.host if request.client else "unknown"
+    if not await check_rate_limit(f"rl:verify_otp:{client_ip}", 5, 300):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many verification attempts. Please wait a few minutes.",
+        )
+
+    if not req.otp.isdigit() or len(req.otp) != 6:
+        raise HTTPException(status_code=400, detail="OTP must be a 6-digit number")
+
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="No pending verification for this email")
+
+    if user.email_verified:
+        return {"message": "Email already verified"}
+
+    if not user.email_otp or not user.email_otp_expires_at:
+        raise HTTPException(
+            status_code=400,
+            detail="No OTP on file. Please request a new verification email.",
+        )
+
+    if user.email_otp_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=400,
+            detail="OTP expired. Please request a new one from the app.",
+        )
+
+    if user.email_otp != req.otp:
+        raise HTTPException(status_code=400, detail="Incorrect OTP. Please try again.")
+
+    user.email_verified = True
+    user.verification_token = None
+    user.verification_token_expires_at = None
+    user.email_otp = None
+    user.email_otp_expires_at = None
+    await db.commit()
+
+    try:
+        from app.services.email import send_welcome_email
+        await send_welcome_email(user.email, user.full_name, db)
+    except Exception as e:
+        print(f"Failed to send welcome email: {e}")
+
+    return {"message": "Email verified successfully"}
 
 
 @router.post("/login", response_model=TokenResponse)
