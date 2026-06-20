@@ -277,7 +277,13 @@ async def verify_otp(
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Customer login - allows users with 'customer' role (can have multiple roles)"""
+    """Unified customer/affiliate login.
+
+    Accepts users with either the 'customer' or 'affiliate' role. Customers
+    with both roles default to the customer dashboard; affiliates without a
+    customer role land in the affiliate dashboard. Admin users must use the
+    dedicated admin login endpoint.
+    """
     client_ip = request.client.host if request.client else "unknown"
     if not await check_rate_limit(f"rl:login:{client_ip}", 10, 300):
         raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
@@ -285,13 +291,15 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Check if user has customer role
-    if not user.has_role("customer"):
+
+    if user.has_role("admin") and not user.has_role("customer") and not user.has_role("affiliate"):
+        raise HTTPException(status_code=403, detail="Please use the admin login page for your account type")
+
+    if not user.has_role("customer") and not user.has_role("affiliate"):
         raise HTTPException(status_code=403, detail="Please use the appropriate login page for your account type")
-    
-    # Set active role to customer
-    user.active_role = "customer"
+
+    # Default active role: customer first, then affiliate, then first available role
+    user.active_role = "customer" if user.has_role("customer") else ("affiliate" if user.has_role("affiliate") else user.get_roles()[0])
     await db.flush()
 
     return TokenResponse(
