@@ -1,5 +1,4 @@
 import uuid
-import enum
 from datetime import datetime
 from typing import Optional
 
@@ -8,12 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
-
-
-class UserRole(str, enum.Enum):
-    customer = "customer"
-    admin = "admin"
-    affiliate = "affiliate"
 
 
 class User(Base):

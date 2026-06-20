@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.middleware.auth import get_current_admin
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.models.rbac import Role, user_roles
 from app.models.product import Product, Category, ProductImage, ProductTier, ProductCustomization, ProductVariant, ProductGroup
 from app.models.order import Order, OrderTracking, OrderStatus, PaymentStatus, OrderItem

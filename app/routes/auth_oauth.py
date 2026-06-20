@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.services.auth import create_access_token, create_refresh_token
 
 router = APIRouter()
