@@ -1,4 +1,5 @@
 import uuid
+import secrets
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -3732,13 +3733,30 @@ async def update_user_roles(
     
     old_roles = user.get_roles()
     user.role = ",".join(new_roles)
-    
+
     # If active_role is no longer in roles, reset it to first role
     if user.active_role and user.active_role not in new_roles:
         user.active_role = new_roles[0]
-    
+
+    # Ensure Affiliate record exists when the affiliate role is assigned,
+    # and suspend it when the role is removed, so the RBAC state and the
+    # affiliate entity stay in sync.
+    affiliate_result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
+    affiliate = affiliate_result.scalar_one_or_none()
+
+    if "affiliate" in new_roles and not affiliate:
+        affiliate = Affiliate(
+            user_id=user.id,
+            referral_code=secrets.token_urlsafe(6).upper(),
+            status=AffiliateStatus.active.value,
+            commission_rate=0.10,
+        )
+        db.add(affiliate)
+    elif "affiliate" not in new_roles and affiliate:
+        affiliate.status = AffiliateStatus.suspended.value
+
     await db.flush()
-    
+
     # Log audit trail
     await log_audit(
         db=db,
@@ -3750,7 +3768,7 @@ async def update_user_roles(
         ip_address=get_client_ip(request),
         user_agent=get_user_agent(request),
     )
-    
+
     return {"message": "Roles updated successfully", "roles": new_roles}
 
 
