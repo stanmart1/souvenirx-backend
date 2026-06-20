@@ -86,6 +86,19 @@ asyncio.run(preflight())
 "
 
 echo "Running database migrations..."
+
+# Auto-merge multiple heads if present so a forked migration graph doesn't
+# crash the container on startup. ``alembic merge`` is a no-op when there is
+# only one head, but it errors out with the same "Multiple head revisions"
+# message we're trying to avoid — so we only run it when there are 2+ heads.
+HEADS=$(alembic heads 2>/dev/null | grep -c '(head)')
+if [ "$HEADS" -gt 1 ]; then
+  echo "Detected $HEADS migration heads — auto-merging..."
+  if ! alembic merge -m "auto-merge heads at startup" heads; then
+    echo "WARNING: auto-merge failed; attempting upgrade with current graph."
+  fi
+fi
+
 alembic upgrade head
 
 echo "Starting SouvenirX API..."
