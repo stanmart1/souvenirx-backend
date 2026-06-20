@@ -3628,6 +3628,46 @@ async def admin_create_user(
     return UserResponse.model_validate(user).model_dump()
 
 
+def _role_match_clause(column, role: str):
+    """Exact-match a comma-separated role against a string column.
+
+    Matches when the role is the only role, the first role, a middle role,
+    or the last role in the comma-separated list.
+    """
+    return or_(
+        column == role,
+        column.like(f"{role},%"),
+        column.like(f"%,{role},%"),
+        column.like(f"%,{role}"),
+    )
+
+
+async def _sync_affiliate_record(db: AsyncSession, user: User, roles: list[str]):
+    """Create, activate, or suspend the Affiliate record based on role set.
+
+    The affiliate dashboard and affiliate management UI depend on the
+    ``affiliates`` table, so this keeps the entity in sync with the user's
+    comma-separated ``role`` value.
+    """
+    affiliate_result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
+    affiliate = affiliate_result.scalar_one_or_none()
+
+    if "affiliate" in roles:
+        if affiliate:
+            if affiliate.status != AffiliateStatus.active.value:
+                affiliate.status = AffiliateStatus.active.value
+        else:
+            affiliate = Affiliate(
+                user_id=user.id,
+                referral_code=secrets.token_urlsafe(6).upper(),
+                status=AffiliateStatus.active.value,
+                commission_rate=0.10,
+            )
+            db.add(affiliate)
+    elif affiliate:
+        affiliate.status = AffiliateStatus.suspended.value
+
+
 @router.get("/users")
 async def list_all_users(
     search: str | None = None,
@@ -3641,23 +3681,23 @@ async def list_all_users(
 ):
     """List all users with optional filtering"""
     query = select(User)
-    
+
     if search:
         query = query.where(
             or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
         )
-    
+
     if role_filter:
-        query = query.where(User.role.like(f"%{role_filter}%"))
-    
+        query = query.where(_role_match_clause(User.role, role_filter))
+
     if is_active is not None:
         query = query.where(User.is_active == is_active)
-    
+
     if email_verified is not None:
         query = query.where(User.email_verified == email_verified)
-    
+
     query = query.order_by(User.created_at.desc())
-    
+
     # Get total count
     count_query = select(func.count()).select_from(User)
     if search:
@@ -3665,18 +3705,18 @@ async def list_all_users(
             or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
         )
     if role_filter:
-        count_query = count_query.where(User.role.like(f"%{role_filter}%"))
+        count_query = count_query.where(_role_match_clause(User.role, role_filter))
     if is_active is not None:
         count_query = count_query.where(User.is_active == is_active)
     if email_verified is not None:
         count_query = count_query.where(User.email_verified == email_verified)
-    
+
     total_result = await db.execute(count_query)
     total = total_result.scalar()
-    
+
     result = await db.execute(query.offset((page - 1) * limit).limit(limit))
     users = result.scalars().all()
-    
+
     return {
         "users": [
             {
@@ -3718,42 +3758,33 @@ async def update_user_roles(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    new_roles = body.get("roles", [])
+    raw_roles = body.get("roles", [])
     valid_roles = ["customer", "affiliate", "admin"]
-    
-    if not new_roles:
+
+    if not raw_roles:
         raise HTTPException(status_code=400, detail="At least one role is required")
-    
-    if not all(r in valid_roles for r in new_roles):
+
+    if not all(r in valid_roles for r in raw_roles):
         raise HTTPException(status_code=400, detail=f"Invalid role. Valid roles: {', '.join(valid_roles)}")
-    
+
+    # De-duplicate while preserving order
+    new_roles = list(dict.fromkeys(raw_roles))
+
     # Prevent removing admin role from yourself
     if str(user.id) == str(admin.id) and "admin" not in new_roles:
         raise HTTPException(status_code=400, detail="Cannot remove admin role from your own account")
-    
+
     old_roles = user.get_roles()
     user.role = ",".join(new_roles)
 
-    # If active_role is no longer in roles, reset it to first role
+    # If active_role is no longer in roles, reset it to the first remaining role
     if user.active_role and user.active_role not in new_roles:
         user.active_role = new_roles[0]
 
-    # Ensure Affiliate record exists when the affiliate role is assigned,
-    # and suspend it when the role is removed, so the RBAC state and the
-    # affiliate entity stay in sync.
-    affiliate_result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
-    affiliate = affiliate_result.scalar_one_or_none()
-
-    if "affiliate" in new_roles and not affiliate:
-        affiliate = Affiliate(
-            user_id=user.id,
-            referral_code=secrets.token_urlsafe(6).upper(),
-            status=AffiliateStatus.active.value,
-            commission_rate=0.10,
-        )
-        db.add(affiliate)
-    elif "affiliate" not in new_roles and affiliate:
-        affiliate.status = AffiliateStatus.suspended.value
+    # Keep the Affiliate entity in sync with the user's role set.
+    # Adding the affiliate role creates/activates the record; removing it
+    # suspends the record. The entire block is flushed in one transaction.
+    await _sync_affiliate_record(db, user, new_roles)
 
     await db.flush()
 
@@ -3897,6 +3928,8 @@ async def bulk_update_users(
     - add_tag: Add a tag to users
     - remove_tag: Remove a tag from users
     - verify_email: Manually verify emails
+    - add_role: Add a role to users (creates/activates Affiliate record when role is affiliate)
+    - remove_role: Remove a role from users (skips users who would be left with no roles)
     """
     from app.services.audit import log_audit, get_client_ip, get_user_agent
     from sqlalchemy import update as sql_update
@@ -3973,6 +4006,44 @@ async def bulk_update_users(
             if value in existing_tags:
                 existing_tags.remove(value)
                 user.tags = ",".join(existing_tags) if existing_tags else ""
+        
+        await db.flush()
+        
+    elif action == "add_role":
+        if not value or value not in ["customer", "affiliate", "admin"]:
+            raise HTTPException(status_code=400, detail="Valid role value is required for add_role action")
+        
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = result.scalars().all()
+        
+        for user in users:
+            roles = user.get_roles()
+            if value not in roles:
+                roles.append(value)
+                user.role = ",".join(roles)
+                if not user.active_role:
+                    user.active_role = roles[0]
+                await _sync_affiliate_record(db, user, roles)
+        
+        await db.flush()
+        
+    elif action == "remove_role":
+        if not value or value not in ["customer", "affiliate", "admin"]:
+            raise HTTPException(status_code=400, detail="Valid role value is required for remove_role action")
+        
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = result.scalars().all()
+        
+        for user in users:
+            roles = user.get_roles()
+            if value in roles:
+                if len(roles) <= 1:
+                    continue  # Skip users who would be left with no roles
+                roles.remove(value)
+                user.role = ",".join(roles)
+                if user.active_role == value:
+                    user.active_role = roles[0]
+                await _sync_affiliate_record(db, user, roles)
         
         await db.flush()
         
