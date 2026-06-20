@@ -92,21 +92,7 @@ class Role(Base):
         foreign_keys=[user_roles.c.user_id, user_roles.c.role_id],
     )
 
-    def has_permission(self, resource: str, action: str) -> bool:
-        """Check if this role grants a specific permission.
-
-        Supports wildcard matching: resource '*' or action '*' grants all
-        permissions on that dimension.
-        """
-        for permission in self.permissions:
-            if permission.resource == "*" or permission.action == "*":
-                return True
-            if permission.resource == resource and permission.action == action:
-                return True
-        return False
-
-
-# Import User at the bottom to avoid circular import issues at module load time.
+    # Import User at the bottom to avoid circular import issues at module load time.
 from app.models.user import User
 
 User.roles = relationship(

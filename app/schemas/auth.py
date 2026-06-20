@@ -51,7 +51,7 @@ class AdminCreateUserRequest(BaseModel):
     password: str
     full_name: str
     phone: str | None = None
-    roles: list[str] = ["customer"]  # subset of ["customer", "affiliate", "admin"]
+    roles: list[str] = ["customer"]  # any active role from the RBAC tables
     send_welcome_email: bool = False
 
 

@@ -4040,8 +4040,17 @@ async def bulk_update_users(
         await db.flush()
         
     elif action == "add_role":
-        if not value or value not in ["customer", "affiliate", "admin"]:
+        if not value:
             raise HTTPException(status_code=400, detail="Valid role value is required for add_role action")
+
+        # Validate against all active roles in the RBAC tables
+        from app.services.rbac import list_roles
+        active_role_names = {r.name for r in await list_roles(db)}
+        if value not in active_role_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role '{value}'. Allowed: {sorted(active_role_names)}",
+            )
 
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users = result.scalars().all()
@@ -4054,7 +4063,7 @@ async def bulk_update_users(
         await db.flush()
 
     elif action == "remove_role":
-        if not value or value not in ["customer", "affiliate", "admin"]:
+        if not value:
             raise HTTPException(status_code=400, detail="Valid role value is required for remove_role action")
 
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
