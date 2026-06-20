@@ -116,6 +116,7 @@ from app.routers.trending_templates import router as trending_templates_router
 from app.routers.recommendations import router as recommendations_router
 from app.routes.loyalty import router as loyalty_router
 from app.routes.fonts import router as fonts_router
+from app.routes.design_assets import router as design_assets_router
 
 app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
@@ -151,6 +152,7 @@ app.include_router(trending_templates_router, tags=["Trending Templates"])
 app.include_router(recommendations_router, tags=["Recommendations"])
 app.include_router(loyalty_router, tags=["Loyalty"])
 app.include_router(fonts_router, tags=["Fonts"])
+app.include_router(design_assets_router, tags=["Design Assets"])
 
 
 @app.get("/api/health")

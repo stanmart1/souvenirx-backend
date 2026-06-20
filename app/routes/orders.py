@@ -600,7 +600,17 @@ def _order_detail(o: Order) -> dict:
         "email": o.email,
         "phone": o.phone,
         "address": f"{o.address}, {o.city}, {o.state}",
-        "items": [{"name": i.product_name, "qty": i.qty, "unitPrice": i.unit_price} for i in o.items],
+        "items": [
+            {
+                "name": i.product_name,
+                "qty": i.qty,
+                "unitPrice": i.unit_price,
+                "customization": i.customization,
+                "design_preview_url": i.design_preview_url,
+                "customer_design_id": str(i.customer_design_id) if i.customer_design_id else None,
+            }
+            for i in o.items
+        ],
         "subtotal": o.subtotal,
         "shipping": o.shipping_fee,
         "total": o.total,

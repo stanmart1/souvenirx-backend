@@ -7,7 +7,94 @@ from sqlalchemy import select
 
 from app.database import async_session
 from app.models.design_template import DesignTemplate
+from app.models.design_font import DesignFont
 from app.models.user import User
+
+
+# Default fonts exposed to the customisation UI.  Google Fonts are downloaded
+# automatically by the mobile/web clients; custom fonts would need a file_url.
+DEFAULT_FONTS = [
+    {
+        "name": "Great Vibes",
+        "display_name": "Great Vibes",
+        "category": "script",
+        "source_type": "google",
+        "preview_text": "Good times Great people",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 1,
+    },
+    {
+        "name": "Montserrat",
+        "display_name": "Montserrat",
+        "category": "sans-serif",
+        "source_type": "google",
+        "preview_text": "Team work",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 2,
+    },
+    {
+        "name": "Cormorant Garamond",
+        "display_name": "Cormorant Garamond",
+        "category": "serif",
+        "source_type": "google",
+        "preview_text": "Made for memories",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 3,
+    },
+    {
+        "name": "Caveat",
+        "display_name": "Caveat",
+        "category": "handwritten",
+        "source_type": "google",
+        "preview_text": "Adventure awaits",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 4,
+    },
+    {
+        "name": "Dancing Script",
+        "display_name": "Dancing Script",
+        "category": "script",
+        "source_type": "google",
+        "preview_text": "Thank you",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 5,
+    },
+    {
+        "name": "Pacifico",
+        "display_name": "Pacifico",
+        "category": "handwritten",
+        "source_type": "google",
+        "preview_text": "Good vibes only",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 6,
+    },
+    {
+        "name": "Satisfy",
+        "display_name": "Satisfy",
+        "category": "handwritten",
+        "source_type": "google",
+        "preview_text": "Good things ahead",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 7,
+    },
+    {
+        "name": "Allura",
+        "display_name": "Allura",
+        "category": "script",
+        "source_type": "google",
+        "preview_text": "Best Team",
+        "is_active": True,
+        "is_premium": False,
+        "sort_order": 8,
+    },
+]
 
 
 # Sample design templates with complete design data
@@ -59,10 +146,9 @@ SAMPLE_TEMPLATES = [
                 }
             ]
         },
-        "thumbnail_url": "https://storage.souvenirx.com/templates/classic-script-thumb.jpg",
+        "thumbnail_url": "/uploads/templates/tote-bag.png",
         "preview_images": [
-            "https://storage.souvenirx.com/templates/classic-script-preview-1.jpg",
-            "https://storage.souvenirx.com/templates/classic-script-preview-2.jpg"
+            "/uploads/templates/tote-bag.png"
         ],
         "compatible_products": [],  # Universal - works with all products
         "is_premium": False,
@@ -116,9 +202,9 @@ SAMPLE_TEMPLATES = [
                 }
             ]
         },
-        "thumbnail_url": "https://storage.souvenirx.com/templates/bold-fun-thumb.jpg",
+        "thumbnail_url": "/uploads/templates/mug.png",
         "preview_images": [
-            "https://storage.souvenirx.com/templates/bold-fun-preview-1.jpg"
+            "/uploads/templates/mug.png"
         ],
         "compatible_products": [],
         "is_premium": False,
@@ -187,9 +273,9 @@ SAMPLE_TEMPLATES = [
                 }
             ]
         },
-        "thumbnail_url": "https://storage.souvenirx.com/templates/elegant-serif-thumb.jpg",
+        "thumbnail_url": "/uploads/templates/thankyou-card.png",
         "preview_images": [
-            "https://storage.souvenirx.com/templates/elegant-serif-preview-1.jpg"
+            "/uploads/templates/thankyou-card.png"
         ],
         "compatible_products": [],
         "is_premium": False,
@@ -241,9 +327,9 @@ SAMPLE_TEMPLATES = [
                 }
             ]
         },
-        "thumbnail_url": "https://storage.souvenirx.com/templates/handwritten-thumb.jpg",
+        "thumbnail_url": "/uploads/templates/good-things-ahead.png",
         "preview_images": [
-            "https://storage.souvenirx.com/templates/handwritten-preview-1.jpg"
+            "/uploads/templates/good-things-ahead.png"
         ],
         "compatible_products": [],
         "is_premium": False,
@@ -251,6 +337,30 @@ SAMPLE_TEMPLATES = [
         "is_featured": True,
     },
 ]
+
+
+async def seed_design_fonts(db: AsyncSession):
+    """Seed default design fonts if none exist."""
+    print("📝 Seeding design fonts...")
+    result = await db.execute(
+        select(DesignFont).where(DesignFont.name.in_([f["name"] for f in DEFAULT_FONTS]))
+    )
+    existing_names = {f.name for f in result.scalars().all()}
+
+    created = 0
+    for font_data in DEFAULT_FONTS:
+        if font_data["name"] in existing_names:
+            continue
+        font = DesignFont(**font_data)
+        db.add(font)
+        created += 1
+
+    if created:
+        await db.flush()
+        print(f"  ✅ Created {created} design fonts")
+    else:
+        print("  ⏭️  All design fonts already exist")
+    return created
 
 
 async def seed_design_templates(db: AsyncSession | None = None):
@@ -267,6 +377,9 @@ async def seed_design_templates(db: AsyncSession | None = None):
     else:
         session = db
     try:
+        # Seed the design fonts first so templates can reference them
+        await seed_design_fonts(session)
+
         # Get first admin user to set as creator
         from app.models.rbac import Role, user_roles
         result = await session.execute(

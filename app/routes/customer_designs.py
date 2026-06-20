@@ -1,11 +1,14 @@
 """Customer design management endpoints"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import datetime
+from pathlib import Path
+import uuid as uuid_module
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
@@ -15,6 +18,8 @@ from app.models.product import Product
 from app.models.logo_upload import LogoUpload, LogoOverlayConfig, ProductMockupTemplate
 from app.services.logo_processing import LogoProcessingService
 from app.services.storage import StorageService
+from app.services.design_renderer import render_design_to_bytes
+from app.config import settings
 
 router = APIRouter(prefix="/api/designs", tags=["customer-designs"])
 
@@ -82,16 +87,32 @@ async def create_customer_design(
     )
     
     db.add(design)
-    
+
+    # Render a preview PNG from the design data and store it
+    preview_url = None
+    try:
+        image_bytes = render_design_to_bytes(design_data)
+        upload_dir = Path(settings.upload_dir) / "designs" / str(design.id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        file_path = upload_dir / "preview.png"
+        with open(file_path, "wb") as f:
+            f.write(image_bytes)
+        preview_url = f"/uploads/designs/{design.id}/preview.png"
+        design.preview_url = preview_url
+    except Exception as e:
+        # Non-fatal: design is still created even if rendering fails
+        import logging
+        logging.warning(f"Failed to render design preview: {e}")
+
     # Increment template usage count
     template.usage_count += 1
-    
+
     # Update popularity score (simple algorithm: usage_count * 0.1)
     template.popularity_score = template.usage_count * 0.1
-    
+
     await db.commit()
     await db.refresh(design)
-    
+
     return {
         "id": str(design.id),
         "message": "Design created successfully",
@@ -101,9 +122,26 @@ async def create_customer_design(
             "template_id": str(design.template_id),
             "product_id": str(design.product_id),
             "status": design.status,
+            "preview_url": preview_url,
             "created_at": design.created_at.isoformat(),
         }
     }
+
+
+@router.post("/render")
+async def render_customer_design(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
+    """Render arbitrary design_data to a PNG and return it directly."""
+    design_data = body.get("design_data")
+    if not isinstance(design_data, dict):
+        raise HTTPException(status_code=400, detail="design_data must be a JSON object")
+    try:
+        image_bytes = render_design_to_bytes(design_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render design: {str(e)}")
+    return Response(content=image_bytes, media_type="image/png")
 
 
 @router.get("")

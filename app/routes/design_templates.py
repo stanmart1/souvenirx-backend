@@ -1,6 +1,7 @@
 """Design template management endpoints"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete
 from sqlalchemy.orm import selectinload
@@ -13,6 +14,8 @@ from app.models.user import User
 from app.models.design_template import DesignTemplate, CustomerDesign
 from app.models.product import Product
 from app.services.audit import log_audit
+from app.services.design_renderer import render_design_to_bytes
+from app.config import settings
 
 router = APIRouter(prefix="/api/design-templates", tags=["design-templates"])
 
@@ -464,6 +467,107 @@ async def duplicate_design_template(
             "name": duplicate.name,
             "slug": duplicate.slug,
         }
+    }
+
+
+@router.get("/admin/templates/{template_id}/design-data")
+async def get_template_design_data(
+    template_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the full design_data JSON for a template."""
+    result = await db.execute(
+        select(DesignTemplate).where(DesignTemplate.id == template_id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    return {
+        "id": str(template.id),
+        "name": template.name,
+        "design_data": template.design_data or {"canvas": {"width": 1000, "height": 1000, "background": "#ffffff"}, "layers": []},
+    }
+
+
+@router.post("/admin/templates/{template_id}/render")
+async def render_template_preview(
+    template_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the template design_data to a PNG and return it directly."""
+    result = await db.execute(
+        select(DesignTemplate).where(DesignTemplate.id == template_id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    design_data = template.design_data or {}
+    try:
+        image_bytes = render_design_to_bytes(design_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render design: {str(e)}")
+
+    return Response(content=image_bytes, media_type="image/png")
+
+
+@router.post("/admin/templates/{template_id}/save-and-render")
+async def save_and_render_template(
+    template_id: str,
+    body: dict,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save design_data, render a PNG thumbnail, and store it in uploads."""
+    from pathlib import Path
+
+    result = await db.execute(
+        select(DesignTemplate).where(DesignTemplate.id == template_id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if "design_data" in body:
+        template.design_data = body["design_data"]
+
+    await db.commit()
+
+    design_data = template.design_data or {}
+    try:
+        image_bytes = render_design_to_bytes(design_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render design: {str(e)}")
+
+    # Save rendered image to uploads/templates
+    upload_dir = Path(settings.upload_dir) / "templates"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{template.slug}_{template_id}.png"
+    file_path = upload_dir / filename
+    with open(file_path, "wb") as f:
+        f.write(image_bytes)
+
+    url = f"/uploads/templates/{filename}"
+    template.thumbnail_url = url
+    template.preview_images = [url]
+    await db.commit()
+
+    await log_audit(
+        db=db,
+        admin_id=admin.id,
+        action="render_design_template",
+        resource_type="design_template",
+        resource_id=str(template.id),
+        changes={"thumbnail_url": url}
+    )
+
+    return {
+        "message": "Template saved and rendered successfully",
+        "thumbnail_url": url,
+        "preview_images": [url],
     }
 
 

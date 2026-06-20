@@ -47,12 +47,10 @@ async def seed_product_bundles(db: AsyncSession, auto_commit: bool = True):
                 ],
                 'savings': 1500
             },
-            'image_url': 'https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=400&h=400&fit=crop',
-            'thumbnail_url': 'https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=200&h=200&fit=crop',
+            'image_url': '/uploads/bundles/summer-reunion.png',
+            'thumbnail_url': '/uploads/bundles/summer-reunion.png',
             'banner_images': [
-                '/uploads/bundles/summer-reunion-1.jpg',
-                '/uploads/bundles/summer-reunion-2.jpg',
-                '/uploads/bundles/summer-reunion-3.jpg'
+                '/uploads/bundles/summer-reunion.png',
             ],
             'is_featured': True,
             'is_active': True,
@@ -315,7 +313,7 @@ async def seed_sample_user_projects(db: AsyncSession, auto_commit: bool = True):
                     'completed_steps': ['product', 'template', 'customize']
                 }
             },
-            'thumbnail_url': '/uploads/projects/family-picnic-thumb.jpg',
+            'thumbnail_url': '/uploads/templates/tote-bag.png',
             'completion_percentage': 75,
             'current_step': 3,
             'total_steps': 4,
@@ -337,7 +335,7 @@ async def seed_sample_user_projects(db: AsyncSession, auto_commit: bool = True):
                     'font': 'Serif'
                 }
             },
-            'thumbnail_url': '/uploads/projects/bridal-shower-thumb.jpg',
+            'thumbnail_url': '/uploads/templates/thankyou-card.png',
             'completion_percentage': 100,
             'current_step': 4,
             'total_steps': 4,
@@ -365,7 +363,7 @@ async def seed_sample_user_projects(db: AsyncSession, auto_commit: bool = True):
                     'completed_steps': ['product', 'template']
                 }
             },
-            'thumbnail_url': '/uploads/projects/team-mugs-thumb.jpg',
+            'thumbnail_url': '/uploads/templates/mug.png',
             'completion_percentage': 50,
             'current_step': 2,
             'total_steps': 4,

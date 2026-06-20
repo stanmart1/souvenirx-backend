@@ -84,23 +84,24 @@ async def seed():
         await db.flush()
 
         # --- Categories ---
-        # Match mobile app reference categories with names, descriptions and images
+        # Match mobile app reference categories with names, descriptions and images.
+        # Images are served from the backend /uploads/static directory.
         categories_data = [
             ("tote-bags",  "Tote Bags",       "ShoppingBag", 1,
              "Stylish, durable & perfect for everyday use",
-             "https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=400&h=400&fit=crop"),
+             "/uploads/categories/tote-bags.png"),
             ("mugs",       "Mugs",            "Coffee",      2,
              "Beautiful designs for your favorite moments",
-             "https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?w=400&h=400&fit=crop"),
+             "/uploads/categories/mugs.png"),
             ("cards",      "Cards",           "Mail",        3,
              "Personalized messages for every occasion",
-             "https://images.unsplash.com/photo-1513519245088-0e12902e35ca?w=400&h=400&fit=crop"),
+             "/uploads/categories/cards.png"),
             ("keychains",  "Keychains",       "Key",         4,
              "Little keepsakes that carry big memories",
-             "https://images.unsplash.com/photo-1622542796254-5b9c46ab0d2f?w=400&h=400&fit=crop"),
+             "/uploads/categories/keychains.png"),
             ("stickers",   "Stickers",        "StickyNote",  5,
              "Fun, trendy & perfect for any surface",
-             "https://images.unsplash.com/photo-1635405074683-96d6b815e9bd?w=400&h=400&fit=crop"),
+             "/uploads/categories/stickers.png"),
             ("home-decor", "Home Decor",      "Home",        6,
              "Custom touches for your cozy space",
              "https://images.unsplash.com/photo-1567016432779-094069958ea5?w=400&h=400&fit=crop"),
