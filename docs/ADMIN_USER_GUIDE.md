@@ -10,11 +10,12 @@
 
 1. [Getting Started](#getting-started)
 2. [User Management](#user-management)
-3. [Customer Management](#customer-management)
-4. [Audit Logs](#audit-logs)
-5. [Email Verification](#email-verification)
-6. [Best Practices](#best-practices)
-7. [Troubleshooting](#troubleshooting)
+3. [Roles & Permissions Management](#roles--permissions-management)
+4. [Customer Management](#customer-management)
+5. [Audit Logs](#audit-logs)
+6. [Email Verification](#email-verification)
+7. [Best Practices](#best-practices)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -160,6 +161,71 @@ Update multiple users at once to save time.
 - You cannot perform bulk operations on your own account
 - All bulk operations are logged in audit trail
 - Changes cannot be undone (except reactivation)
+
+---
+
+## Roles & Permissions Management
+
+### Overview
+
+The **Roles & Permissions** page (`/admin/roles`) lets you manage access control
+across the platform. You can create custom roles, assign fine-grained permissions,
+and control who can do what.
+
+### System Roles
+
+The following system roles are pre-configured and cannot be deleted or deactivated:
+
+| Role | Description |
+|------|-------------|
+| **Admin** | Full access to everything (wildcard `*:*` permission) |
+| **Customer** | Can browse, purchase, and manage orders |
+| **Affiliate** | Customer perms + referral and payout access |
+| **Support** | Can view orders, users, and manage support tickets |
+| **Fulfillment** | Can view and update orders |
+
+### Creating Custom Roles
+
+1. Navigate to **Access Control → Roles & Permissions** in the admin sidebar.
+2. Click **New Role**.
+3. Enter a **Role Slug** (lowercase, alphanumeric, underscores — e.g., `content_editor`).
+4. Enter a **Display Name** (e.g., "Content Editor").
+5. Add an optional description.
+6. Click **Create Role**.
+
+### Assigning Permissions to a Role
+
+1. Select a role from the list on the left.
+2. The **PermissionMatrix** on the right shows all available permissions grouped by resource.
+3. Toggle individual permissions by clicking on them, or use the resource header
+   to select/deselect all permissions for a resource.
+4. Click **Save** to persist changes.
+
+### Assigning Roles to Users
+
+1. Navigate to **Access Control → Users**.
+2. Find the user and click **Manage Roles**.
+3. Check the roles you want to assign (custom roles appear in the list).
+4. Click **Update Roles** and confirm.
+
+### Deleting Custom Roles
+
+1. Select the custom role in the Roles & Permissions page.
+2. Click the trash icon.
+3. Confirm deletion in the dialog.
+
+**Note:** You cannot delete:
+- System roles (admin, customer, affiliate, support, fulfillment)
+- Roles that have users assigned — remove the role from all users first
+
+### Audit Trail
+
+All role and permission changes are logged in the audit trail:
+- Role creation, updates, and deletion
+- Permission grants and revokes
+- User role assignments and removals
+
+View these in **Access Control → Audit Logs**.
 
 ---
 
