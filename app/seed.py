@@ -65,6 +65,8 @@ async def seed():
             full_name="Admin User",
             phone="+234 800 000 0000",
             role="admin",
+            email_verified=True,
+            created_by_admin=True,
         )
         db.add(admin)
 
@@ -75,6 +77,8 @@ async def seed():
             full_name="Demo Customer",
             phone="+234 801 234 5678",
             role="customer",
+            email_verified=True,
+            created_by_admin=True,
         )
         db.add(customer)
         await db.flush()
