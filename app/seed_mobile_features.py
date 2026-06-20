@@ -47,8 +47,8 @@ async def seed_product_bundles(db: AsyncSession, auto_commit: bool = True):
                 ],
                 'savings': 1500
             },
-            'image_url': '/uploads/bundles/summer-reunion-pack.jpg',
-            'thumbnail_url': '/uploads/bundles/summer-reunion-pack-thumb.jpg',
+            'image_url': 'https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=400&h=400&fit=crop',
+            'thumbnail_url': 'https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=200&h=200&fit=crop',
             'banner_images': [
                 '/uploads/bundles/summer-reunion-1.jpg',
                 '/uploads/bundles/summer-reunion-2.jpg',
@@ -222,11 +222,19 @@ async def seed_trending_templates(db: AsyncSession, auto_commit: bool = True):
         print("⚠️  No design templates found. Skipping trending templates seed.")
         return
     
+    # Reference image trending template display names
+    reference_names = [
+        'Teamwork Goals',
+        'Collect Moments',
+        'Grateful for You',
+        'Good Time',
+    ]
     trending_data = []
     for idx, template in enumerate(templates):
+        display_name = reference_names[idx] if idx < len(reference_names) else template.name
         trending_data.append({
             'template_id': template.id,
-            'display_name': template.name,
+            'display_name': display_name,
             'display_order': idx + 1,
             'trending_score': 100 - (idx * 10),
             'view_count_24h': 150 - (idx * 15),

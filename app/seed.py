@@ -84,20 +84,49 @@ async def seed():
         await db.flush()
 
         # --- Categories ---
+        # Match mobile app reference categories with names, descriptions and images
         categories_data = [
-            # icon values are Lucide React icon component names rendered by the frontend
-            ("mugs",       "Custom Mugs",      "Coffee",      1),
-            ("tshirts",    "Branded T-Shirts",  "Shirt",       2),
-            ("tote-bags",  "Tote Bags",         "ShoppingBag", 3),
-            ("plaques",    "Engraved Plaques",  "Award",       4),
-            ("cards",      "Greeting Cards",    "Mail",        5),
-            ("wristbands", "Wristbands",        "Watch",       6),
-            ("keychains",  "Keychains",         "Key",         7),
-            ("stickers",   "Stickers",          "StickyNote",  8),
+            ("tote-bags",  "Tote Bags",       "ShoppingBag", 1,
+             "Stylish, durable & perfect for everyday use",
+             "https://images.unsplash.com/photo-1597633425046-08f5110420b5?w=400&h=400&fit=crop"),
+            ("mugs",       "Mugs",            "Coffee",      2,
+             "Beautiful designs for your favorite moments",
+             "https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?w=400&h=400&fit=crop"),
+            ("cards",      "Cards",           "Mail",        3,
+             "Personalized messages for every occasion",
+             "https://images.unsplash.com/photo-1513519245088-0e12902e35ca?w=400&h=400&fit=crop"),
+            ("keychains",  "Keychains",       "Key",         4,
+             "Little keepsakes that carry big memories",
+             "https://images.unsplash.com/photo-1622542796254-5b9c46ab0d2f?w=400&h=400&fit=crop"),
+            ("stickers",   "Stickers",        "StickyNote",  5,
+             "Fun, trendy & perfect for any surface",
+             "https://images.unsplash.com/photo-1635405074683-96d6b815e9bd?w=400&h=400&fit=crop"),
+            ("home-decor", "Home Decor",      "Home",        6,
+             "Custom touches for your cozy space",
+             "https://images.unsplash.com/photo-1567016432779-094069958ea5?w=400&h=400&fit=crop"),
+            ("photo-frames", "Photo Frames",  "Image",       7,
+             "Frame your memories in a special way",
+             "https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?w=400&h=400&fit=crop"),
+            ("drinkware",  "Drinkware",       "CupSoda",     8,
+             "Stay refreshed with custom style",
+             "https://images.unsplash.com/photo-1602143407151-01114192003b?w=400&h=400&fit=crop"),
+            ("tshirts",    "Apparel",         "Shirt",       9,
+             "Wearable memories made just for you",
+             "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop"),
+            ("gift-sets",  "Gift Sets",       "Gift",        10,
+             "Curated bundles for every celebration",
+             "https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=400&h=400&fit=crop"),
         ]
         cat_map = {}
-        for slug, name, icon, sort in categories_data:
-            cat = Category(slug=slug, name=name, icon=icon, sort_order=sort)
+        for slug, name, icon, sort, description, image in categories_data:
+            cat = Category(
+                slug=slug,
+                name=name,
+                icon=icon,
+                sort_order=sort,
+                description=description,
+                image=image,
+            )
             db.add(cat)
             cat_map[slug] = cat
         await db.flush()
