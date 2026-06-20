@@ -26,6 +26,7 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(20))
     role: Mapped[str] = mapped_column(String(100), default="customer", nullable=False)  # Comma-separated roles: "customer,affiliate,admin"
     active_role: Mapped[Optional[str]] = mapped_column(String(20))  # Current active role for session
+    active_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=True)  # FK to new RBAC roles table
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_token: Mapped[Optional[str]] = mapped_column(String(255))
