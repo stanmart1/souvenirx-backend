@@ -251,7 +251,14 @@ async def seed_sample_user_projects(db: AsyncSession, auto_commit: bool = True):
     print("Seeding sample user projects...")
     
     # Get a user (preferably admin for demo)
-    result = await db.execute(select(User).where(User.role.contains('admin')).limit(1))
+    from app.models.rbac import Role, user_roles
+    result = await db.execute(
+        select(User)
+        .join(user_roles, User.id == user_roles.c.user_id)
+        .join(Role, user_roles.c.role_id == Role.id)
+        .where(Role.name == "admin")
+        .limit(1)
+    )
     user = result.scalar_one_or_none()
     if not user:
         result = await db.execute(select(User).limit(1))

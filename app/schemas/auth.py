@@ -29,19 +29,14 @@ class UserResponse(BaseModel):
     email: str
     full_name: str
     phone: str | None
-    role: str  # Comma-separated roles
-    active_role: str | None  # Current active role
+    roles: list[str] = []
+    active_role: str | None = None
     email_verified: bool = False
     avatar_url: str | None = None
     loyalty_points: int = 0
     created_by_admin: bool = False
 
     model_config = {"from_attributes": True}
-    
-    @property
-    def roles(self) -> list[str]:
-        """Get list of roles"""
-        return [r.strip() for r in self.role.split(",") if r.strip()]
 
 
 class UpdateProfileRequest(BaseModel):

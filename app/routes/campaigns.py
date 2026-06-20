@@ -202,18 +202,26 @@ async def send_campaign(
             recipient_emails = list(result.scalars().all())
 
         elif campaign.target_audience == "customers":
+            from app.models.rbac import Role, user_roles
             result = await db.execute(
-                select(User.email).where(
-                    User.role == "customer",
+                select(User.email)
+                .join(user_roles, User.id == user_roles.c.user_id)
+                .join(Role, user_roles.c.role_id == Role.id)
+                .where(
+                    Role.name == "customer",
                     User.is_active == True,
                 )
             )
             recipient_emails = list(result.scalars().all())
 
         elif campaign.target_audience == "affiliates":
+            from app.models.rbac import Role, user_roles
             result = await db.execute(
-                select(User.email).where(
-                    User.role.in_(["affiliate"]),
+                select(User.email)
+                .join(user_roles, User.id == user_roles.c.user_id)
+                .join(Role, user_roles.c.role_id == Role.id)
+                .where(
+                    Role.name == "affiliate",
                     User.is_active == True,
                 )
             )

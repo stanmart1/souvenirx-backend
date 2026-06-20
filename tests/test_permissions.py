@@ -62,10 +62,10 @@ class TestUserHasRole:
 
         db = AsyncMock()
         result = MagicMock()
-        result.scalar.return_value = 1
+        result.first.return_value = ("role-id",)
         db.execute.return_value = result
 
-        assert await user_has_role(user, "admin", db) is True
+        assert await user_has_role(db, user, "admin") is True
 
         call = db.execute.call_args[0][0]
         compiled = str(call.compile(compile_kwargs={"literal_binds": True}))
@@ -78,7 +78,7 @@ class TestUserHasRole:
 
         db = AsyncMock()
         result = MagicMock()
-        result.scalar.return_value = 0
+        result.first.return_value = None
         db.execute.return_value = result
 
-        assert await user_has_role(user, "admin", db) is False
+        assert await user_has_role(db, user, "admin") is False

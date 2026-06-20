@@ -10,24 +10,24 @@ from app.routes.admin import _role_match_clause, _sync_affiliate_record
 
 
 class TestRoleMatchClause:
-    """Verify exact matching of comma-separated roles in the user list filter."""
+    """Verify the RBAC-based role filter matches users via user_roles/roles tables."""
 
-    def test_generates_exact_role_clauses(self):
-        clause = _role_match_clause(User.role, "affiliate")
+    def test_generates_subquery_filtering_by_role_name(self):
+        clause = _role_match_clause("affiliate")
         compiled = str(clause.compile(compile_kwargs={"literal_binds": True}))
 
-        assert "users.role = 'affiliate'" in compiled
-        assert "users.role LIKE 'affiliate,%'" in compiled
-        assert "users.role LIKE '%,affiliate,%'" in compiled
-        assert "users.role LIKE '%,affiliate'" in compiled
+        # The filter uses a subquery against user_roles + roles
+        assert "affiliate" in compiled
+        assert "user_roles" in compiled
+        assert "roles" in compiled
 
-    def test_does_not_use_substring_match(self):
-        clause = _role_match_clause(User.role, "affiliate")
+    def test_does_not_use_legacy_role_column(self):
+        clause = _role_match_clause("affiliate")
         compiled = str(clause.compile(compile_kwargs={"literal_binds": True}))
 
-        # The old implementation used LIKE '%affiliate%', which would also match
-        # a bogus role like 'superaffiliate'. Make sure we no longer do that.
-        assert "LIKE '%affiliate%'" not in compiled
+        # The old implementation matched against users.role via LIKE.
+        # The new implementation should not reference users.role at all.
+        assert "users.role" not in compiled
 
 
 class TestSyncAffiliateRecord:

@@ -66,16 +66,6 @@ async def user_has_permission(user: User, permission: str, db: AsyncSession) -> 
     return result.scalar() > 0
 
 
-async def user_has_role(user: User, role_name: str, db: AsyncSession) -> bool:
-    """Backwards-compatible role check using the new RBAC tables."""
-    result = await db.execute(
-        select(func.count())
-        .select_from(user_roles)
-        .join(Role, user_roles.c.role_id == Role.id)
-        .where(
-            user_roles.c.user_id == user.id,
-            Role.name == role_name,
-            Role.is_active.is_(True),
-        )
-    )
-    return result.scalar() > 0
+# Re-export the canonical role check from the RBAC service for backwards
+# compatibility with callers that import from this module.
+from app.services.rbac import user_has_role  # noqa: E402,F401

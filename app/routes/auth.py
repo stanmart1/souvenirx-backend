@@ -21,6 +21,7 @@ from app.services.auth import (
     create_refresh_token, create_reset_token, create_guest_token, decode_token,
 )
 from app.middleware.auth import get_current_user
+from app.models.rbac import user_roles
 from app.redis import check_rate_limit
 
 router = APIRouter()
@@ -53,7 +54,6 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         password_hash=hash_password(req.password),
         full_name=req.full_name,
         phone=req.phone,
-        role="customer",  # Explicitly set role
         email_verified=False,
         verification_token=verification_token,
         verification_token_expires_at=expires_at,
@@ -65,8 +65,8 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     db.add(user)
     await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    from app.services.rbac import assign_roles
+    await assign_roles(db, user, ["customer"])
 
     from app.routes.loyalty import award_points, get_rule_value
     signup_bonus = await get_rule_value(db, "signup_bonus")
@@ -113,7 +113,6 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
         password_hash=hash_password(req.password),
         full_name=req.full_name,
         phone=req.phone,
-        role="affiliate",  # Set role as affiliate
         email_verified=False,
         verification_token=verification_token,
         verification_token_expires_at=expires_at,
@@ -133,8 +132,8 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     db.add(affiliate)
     await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    from app.services.rbac import assign_roles
+    await assign_roles(db, user, ["affiliate"])
 
     # Send verification email with both click-link and numeric OTP.
     try:
@@ -298,18 +297,22 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if user.has_role("admin") and not user.has_role("customer") and not user.has_role("affiliate"):
+    from app.services.rbac import get_user_role_names, set_active_role, user_has_role
+
+    roles = await get_user_role_names(db, user)
+    is_admin = "admin" in roles
+    is_customer = "customer" in roles
+    is_affiliate = "affiliate" in roles
+
+    if is_admin and not is_customer and not is_affiliate:
         raise HTTPException(status_code=403, detail="Please use the admin login page for your account type")
 
-    if not user.has_role("customer") and not user.has_role("affiliate"):
+    if not is_customer and not is_affiliate:
         raise HTTPException(status_code=403, detail="Please use the appropriate login page for your account type")
 
     # Default active role: customer first, then affiliate, then first available role
-    user.active_role = "customer" if user.has_role("customer") else ("affiliate" if user.has_role("affiliate") else user.get_roles()[0])
-    await db.flush()
-
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    active = "customer" if is_customer else ("affiliate" if is_affiliate else roles[0])
+    await set_active_role(db, user, active)
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -327,17 +330,15 @@ async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession 
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Check if user has affiliate role
-    if not user.has_role("affiliate"):
-        raise HTTPException(status_code=403, detail="This login is for affiliates only. Please use the customer login page.")
-    
-    # Set active role to affiliate
-    user.active_role = "affiliate"
-    await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    from app.services.rbac import set_active_role, user_has_role
+
+    # Check if user has affiliate role
+    if not await user_has_role(db, user, "affiliate"):
+        raise HTTPException(status_code=403, detail="This login is for affiliates only. Please use the customer login page.")
+
+    # Set active role to affiliate
+    await set_active_role(db, user, "affiliate")
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -355,17 +356,15 @@ async def admin_login(req: LoginRequest, request: Request, db: AsyncSession = De
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Check if user has admin role
-    if not user.has_role("admin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    # Set active role to admin
-    user.active_role = "admin"
-    await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    from app.services.rbac import set_active_role, user_has_role
+
+    # Check if user has admin role
+    if not await user_has_role(db, user, "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Set active role to admin
+    await set_active_role(db, user, "admin")
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -392,8 +391,22 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(user: User = Depends(get_current_user)):
-    return user
+async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.services.rbac import get_active_role_name, get_user_role_names
+
+    roles = await get_user_role_names(db, user)
+    active_role = await get_active_role_name(db, user)
+    # Build a response dict with RBAC-derived fields
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "roles": roles,
+        "active_role": active_role,
+        "email_verified": user.email_verified,
+        "avatar_url": user.avatar_url,
+    }
 
 
 @router.get("/me/permissions")
@@ -407,17 +420,13 @@ async def get_me_permissions(
     fine-grained permissions instead of coarse role booleans.
     """
     from app.middleware.permissions import user_has_permission
-    from app.models.rbac import Permission, Role, role_permissions
+    from app.models.rbac import Permission, Role, role_permissions, user_roles
+    from app.services.rbac import get_active_role_name, get_user_role_names
 
-    # Get active role names from the new RBAC tables
-    role_rows = await db.execute(
-        select(Role.name)
-        .join(user_roles, Role.id == user_roles.c.role_id)
-        .where(user_roles.c.user_id == user.id, Role.is_active.is_(True))
-    )
-    rbac_roles = sorted(role_rows.scalars().all())
+    rbac_roles = await get_user_role_names(db, user)
+    active_role = await get_active_role_name(db, user)
 
-    # Get effective permissions from the new RBAC tables
+    # Get effective permissions from the RBAC tables
     permission_rows = await db.execute(
         select(Permission.resource, Permission.action)
         .join(role_permissions, Permission.id == role_permissions.c.permission_id)
@@ -431,11 +440,9 @@ async def get_me_permissions(
     )
     permissions = sorted({f"{r}:{a}" for r, a in permission_rows.all()})
 
-    # Include legacy role string for backwards compatibility during transition.
     return {
-        "role": user.role,
-        "active_role": user.active_role,
         "roles": rbac_roles,
+        "active_role": active_role,
         "permissions": permissions,
         "is_superuser": await user_has_permission(user, "*:*", db),
     }
@@ -454,7 +461,20 @@ async def update_me(
     if req.avatar_url is not None:
         user.avatar_url = req.avatar_url
     await db.flush()
-    return user
+
+    from app.services.rbac import get_active_role_name, get_user_role_names
+    roles = await get_user_role_names(db, user)
+    active_role = await get_active_role_name(db, user)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "roles": roles,
+        "active_role": active_role,
+        "email_verified": user.email_verified,
+        "avatar_url": user.avatar_url,
+    }
 
 
 @router.put("/me/fcm-token")
@@ -754,22 +774,20 @@ async def switch_role(
     db: AsyncSession = Depends(get_db),
 ):
     """Switch the active role for the current user"""
-    # Validate that user has this role
-    if not user.has_role(role):
+    from app.services.rbac import get_user_role_names, set_active_role
+
+    try:
+        await set_active_role(db, user, role)
+    except ValueError:
+        roles = await get_user_role_names(db, user)
         raise HTTPException(
-            status_code=403, 
-            detail=f"You do not have the '{role}' role. Available roles: {', '.join(user.get_roles())}"
+            status_code=403,
+            detail=f"You do not have the '{role}' role. Available roles: {', '.join(roles)}",
         )
-    
-    # Update active role
-    user.active_role = role
-    await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
-
+    roles = await get_user_role_names(db, user)
     return {
         "message": f"Switched to {role} role",
         "active_role": role,
-        "available_roles": user.get_roles()
+        "available_roles": roles,
     }

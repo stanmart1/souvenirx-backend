@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.middleware.auth import get_current_admin
 from app.models.user import User, UserRole
+from app.models.rbac import Role, user_roles
 from app.models.product import Product, Category, ProductImage, ProductTier, ProductCustomization, ProductVariant, ProductGroup
 from app.models.order import Order, OrderTracking, OrderStatus, PaymentStatus, OrderItem
 from app.models.review import Review
@@ -95,12 +96,12 @@ async def dashboard_stats(admin: User = Depends(get_current_admin), db: AsyncSes
         orders_trend = round(((total_orders - total_orders_prev) / total_orders_prev) * 100, 1)
 
     # Customers count (all time)
-    customers_result = await db.execute(select(func.count()).where(User.role == UserRole.customer.value))
+    customers_result = await db.execute(select(func.count()).select_from(User).where(_role_match_clause("customer")))
     total_customers = customers_result.scalar()
 
     # Customers count (previous 30 days for trend)
     customers_prev_result = await db.execute(
-        select(func.count()).where(User.role == UserRole.customer.value, User.created_at >= sixty_days_ago, User.created_at < thirty_days_ago)
+        select(func.count()).select_from(User).where(_role_match_clause("customer"), User.created_at >= sixty_days_ago, User.created_at < thirty_days_ago)
     )
     total_customers_prev = customers_prev_result.scalar()
 
@@ -278,7 +279,7 @@ async def customer_analytics(
             func.date_trunc('month', User.created_at).label('month'),
             func.count(User.id).label('new_customers'),
         )
-        .where(User.role == UserRole.customer.value, User.created_at >= six_months_ago)
+        .where(_role_match_clause("customer"), User.created_at >= six_months_ago)
         .group_by(func.date_trunc('month', User.created_at))
         .order_by(func.date_trunc('month', User.created_at))
     )
@@ -294,7 +295,7 @@ async def customer_analytics(
             func.count(Order.id).label('order_count'),
         )
         .join(Order, User.id == Order.user_id)
-        .where(User.role == UserRole.customer.value, Order.payment_status == PaymentStatus.success.value)
+        .where(_role_match_clause("customer"), Order.payment_status == PaymentStatus.success.value)
         .group_by(User.id, User.full_name, User.email)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())
         .limit(10)
@@ -1415,7 +1416,7 @@ async def list_customers(
     ).outerjoin(Order, (Order.user_id == User.id) & (Order.status == 'completed'))
     
     # Filter by customer role
-    query = query.where(User.role.like('%customer%'))
+    query = query.where(_role_match_clause("customer"))
     
     # Search filter
     if search:
@@ -1472,7 +1473,7 @@ async def list_customers(
     
     # Get total count for pagination
     count_query = select(func.count()).select_from(
-        select(User.id).where(User.role.like('%customer%')).subquery()
+        select(User.id).where(_role_match_clause("customer")).subquery()
     )
     total_result = await db.execute(count_query)
     total = total_result.scalar()
@@ -1511,7 +1512,7 @@ async def get_customer_detail(
     from sqlalchemy import func
 
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
+        select(User).where(User.id == uuid.UUID(customer_id), _role_match_clause("customer"))
     )
     customer = result.scalar_one_or_none()
     if not customer:
@@ -1570,7 +1571,7 @@ async def update_customer(
     from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
+        select(User).where(User.id == uuid.UUID(customer_id), _role_match_clause("customer"))
     )
     customer = result.scalar_one_or_none()
     if not customer:
@@ -1682,7 +1683,7 @@ async def add_customer_note(
     
     # Verify customer exists
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
+        select(User).where(User.id == uuid.UUID(customer_id), _role_match_clause("customer"))
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -1775,7 +1776,7 @@ async def calculate_customer_ltv(
     
     # Verify customer exists
     result = await db.execute(
-        select(User).where(User.id == customer_uuid, User.role.like('%customer%'))
+        select(User).where(User.id == customer_uuid, _role_match_clause("customer"))
     )
     customer = result.scalar_one_or_none()
     if not customer:
@@ -1837,7 +1838,7 @@ async def update_customer_tags(
     from app.services.audit import log_audit, get_client_ip, get_user_agent
     
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(customer_id), User.role.like('%customer%'))
+        select(User).where(User.id == uuid.UUID(customer_id), _role_match_clause("customer"))
     )
     customer = result.scalar_one_or_none()
     if not customer:
@@ -1961,7 +1962,7 @@ async def export_customers_csv(
                     func.coalesce(func.sum(Order.total), 0).label("total_spent"),
                 )
                 .outerjoin(Order, (Order.user_id == User.id) & (Order.payment_status == PaymentStatus.success.value))
-                .where(User.role.like('%customer%'))
+                .where(_role_match_clause("customer"))
                 .group_by(User.id)
                 .order_by(User.created_at.desc())
                 .offset(offset)
@@ -3133,7 +3134,7 @@ async def list_all_carts(
 ):
     """List all users with their cart items and cart value."""
     # Get users with cart items
-    query = select(User).where(User.role == UserRole.customer.value)
+    query = select(User).where(_role_match_clause("customer"))
     if search:
         query = query.where(or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%")))
     
@@ -3577,7 +3578,8 @@ async def admin_create_user(
             detail=f"Invalid role(s): {sorted(invalid)}. Allowed: {sorted(ALLOWED_ROLES)}",
         )
     # Only super-admins may mint new admins.
-    if "admin" in body.roles and not admin.has_role("admin"):
+    from app.services.rbac import user_has_role
+    if "admin" in body.roles and not await user_has_role(db, admin, "admin"):
         raise HTTPException(status_code=403, detail="Only super-admins can create admin accounts")
 
     existing = await db.execute(select(User).where(User.email == body.email))
@@ -3592,8 +3594,6 @@ async def admin_create_user(
         password_hash=hash_password(body.password),
         full_name=body.full_name,
         phone=body.phone,
-        role=",".join(body.roles),
-        active_role=body.roles[0],
         # KEY: admin-created accounts skip the OTP / email-verification step.
         email_verified=True,
         created_by_admin=True,
@@ -3603,8 +3603,10 @@ async def admin_create_user(
     db.add(user)
     await db.flush()
 
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
+    from app.services.rbac import assign_roles
+    await assign_roles(db, user, body.roles, assigned_by=admin)
+    # Sync affiliate record if affiliate role was assigned
+    await _sync_affiliate_record(db, user, body.roles)
 
     # Optional welcome email (admin explicitly opted in).
     if body.send_welcome_email:
@@ -3628,20 +3630,32 @@ async def admin_create_user(
     except Exception:
         pass
 
-    return UserResponse.model_validate(user).model_dump()
+    from app.services.rbac import get_active_role_name, get_user_role_names
+    roles = await get_user_role_names(db, user)
+    active_role = await get_active_role_name(db, user)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        phone=user.phone,
+        roles=roles,
+        active_role=active_role,
+        email_verified=user.email_verified,
+        avatar_url=user.avatar_url,
+        loyalty_points=user.loyalty_points,
+        created_by_admin=user.created_by_admin,
+    ).model_dump()
 
 
-def _role_match_clause(column, role: str):
-    """Exact-match a comma-separated role against a string column.
+def _role_match_clause(role: str):
+    """Return a filter that matches users who have the given role via the RBAC tables.
 
-    Matches when the role is the only role, the first role, a middle role,
-    or the last role in the comma-separated list.
+    Use as: ``query.where(_role_match_clause("customer"))``
     """
-    return or_(
-        column == role,
-        column.like(f"{role},%"),
-        column.like(f"%,{role},%"),
-        column.like(f"%,{role}"),
+    return User.id.in_(
+        select(user_roles.c.user_id)
+        .join(Role, user_roles.c.role_id == Role.id)
+        .where(Role.name == role, Role.is_active.is_(True))
     )
 
 
@@ -3650,7 +3664,7 @@ async def _sync_affiliate_record(db: AsyncSession, user: User, roles: list[str])
 
     The affiliate dashboard and affiliate management UI depend on the
     ``affiliates`` table, so this keeps the entity in sync with the user's
-    comma-separated ``role`` value.
+    RBAC role assignments.
     """
     affiliate_result = await db.execute(select(Affiliate).where(Affiliate.user_id == user.id))
     affiliate = affiliate_result.scalar_one_or_none()
@@ -3691,7 +3705,7 @@ async def list_all_users(
         )
 
     if role_filter:
-        query = query.where(_role_match_clause(User.role, role_filter))
+        query = query.where(_role_match_clause(role_filter))
 
     if is_active is not None:
         query = query.where(User.is_active == is_active)
@@ -3708,7 +3722,7 @@ async def list_all_users(
             or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
         )
     if role_filter:
-        count_query = count_query.where(_role_match_clause(User.role, role_filter))
+        count_query = count_query.where(_role_match_clause(role_filter))
     if is_active is not None:
         count_query = count_query.where(User.is_active == is_active)
     if email_verified is not None:
@@ -3720,22 +3734,27 @@ async def list_all_users(
     result = await db.execute(query.offset((page - 1) * limit).limit(limit))
     users = result.scalars().all()
 
+    from app.services.rbac import get_active_role_name, get_user_role_names
+
+    user_list = []
+    for u in users:
+        roles = await get_user_role_names(db, u)
+        active_role = await get_active_role_name(db, u)
+        user_list.append({
+            "id": str(u.id),
+            "name": u.full_name,
+            "email": u.email,
+            "phone": u.phone,
+            "roles": roles,
+            "active_role": active_role,
+            "joined": u.created_at.strftime("%Y-%m-%d"),
+            "is_active": u.is_active,
+            "email_verified": u.email_verified,
+            "tags": u.tags,
+        })
+
     return {
-        "users": [
-            {
-                "id": str(u.id),
-                "name": u.full_name,
-                "email": u.email,
-                "phone": u.phone,
-                "roles": u.get_roles(),
-                "active_role": u.active_role,
-                "joined": u.created_at.strftime("%Y-%m-%d"),
-                "is_active": u.is_active,
-                "email_verified": u.email_verified,
-                "tags": u.tags,
-            }
-            for u in users
-        ],
+        "users": user_list,
         "pagination": {
             "page": page,
             "limit": limit,
@@ -3777,21 +3796,15 @@ async def update_user_roles(
     if str(user.id) == str(admin.id) and "admin" not in new_roles:
         raise HTTPException(status_code=400, detail="Cannot remove admin role from your own account")
 
-    old_roles = user.get_roles()
-    user.role = ",".join(new_roles)
-
-    # If active_role is no longer in roles, reset it to the first remaining role
-    if user.active_role and user.active_role not in new_roles:
-        user.active_role = new_roles[0]
+    from app.services.rbac import assign_roles, get_user_role_names
+    old_roles = await get_user_role_names(db, user)
+    try:
+        new_roles = await assign_roles(db, user, new_roles, assigned_by=admin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Keep the Affiliate entity in sync with the user's role set.
-    # Adding the affiliate role creates/activates the record; removing it
-    # suspends the record. The entire block is flushed in one transaction.
     await _sync_affiliate_record(db, user, new_roles)
-
-    # Keep the new RBAC tables in sync with the legacy role string.
-    from app.services.rbac import sync_user_roles_from_legacy
-    await sync_user_roles_from_legacy(db, user)
 
     await db.flush()
 
@@ -3832,14 +3845,15 @@ async def delete_user(
     
     if permanent:
         # Hard delete - requires admin role
-        if not admin.has_role("admin"):
+        from app.services.rbac import get_user_role_names, user_has_role
+        if not await user_has_role(db, admin, "admin"):
             raise HTTPException(status_code=403, detail="Super admin permission required for permanent deletion")
-        
+
         # Store user info for audit log before deletion
         user_info = {
             "email": user.email,
             "name": user.full_name,
-            "roles": user.get_roles(),
+            "roles": await get_user_role_names(db, user),
         }
         
         await db.delete(user)
@@ -4023,16 +4037,10 @@ async def bulk_update_users(
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users = result.scalars().all()
 
-        from app.services.rbac import sync_user_roles_from_legacy
+        from app.services.rbac import add_role as rbac_add_role
         for user in users:
-            roles = user.get_roles()
-            if value not in roles:
-                roles.append(value)
-                user.role = ",".join(roles)
-                if not user.active_role:
-                    user.active_role = roles[0]
-                await _sync_affiliate_record(db, user, roles)
-                await sync_user_roles_from_legacy(db, user)
+            new_roles = await rbac_add_role(db, user, value, assigned_by=admin)
+            await _sync_affiliate_record(db, user, new_roles)
 
         await db.flush()
 
@@ -4043,18 +4051,18 @@ async def bulk_update_users(
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users = result.scalars().all()
 
-        from app.services.rbac import sync_user_roles_from_legacy
+        from app.services.rbac import get_user_role_names, remove_role as rbac_remove_role
         for user in users:
-            roles = user.get_roles()
-            if value in roles:
-                if len(roles) <= 1:
-                    continue  # Skip users who would be left with no roles
-                roles.remove(value)
-                user.role = ",".join(roles)
-                if user.active_role == value:
-                    user.active_role = roles[0]
-                await _sync_affiliate_record(db, user, roles)
-                await sync_user_roles_from_legacy(db, user)
+            current = await get_user_role_names(db, user)
+            if value not in current:
+                continue
+            if len(current) <= 1:
+                continue  # Skip users who would be left with no roles
+            try:
+                new_roles = await rbac_remove_role(db, user, value)
+                await _sync_affiliate_record(db, user, new_roles)
+            except ValueError:
+                continue
 
         await db.flush()
         
@@ -4098,8 +4106,8 @@ async def impersonate_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
     
     # Prevent impersonating other admins
-    from app.middleware.permissions import user_has_role
-    if customer.has_role("admin") or await user_has_role(customer, "admin", db):
+    from app.services.rbac import user_has_role
+    if await user_has_role(db, customer, "admin"):
         raise HTTPException(status_code=403, detail="Cannot impersonate admin users")
     
     # Create impersonation token (JWT with special claim)

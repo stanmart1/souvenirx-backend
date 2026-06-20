@@ -125,13 +125,15 @@ async def google_callback(
             full_name=name,
             # No password set for OAuth users — they can always set one via "forgot password"
             hashed_password="",
-            role=UserRole.customer,
             is_active=True,
             email_verified=True,  # Google has verified their email
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
+
+        from app.services.rbac import assign_roles
+        await assign_roles(db, user, ["customer"])
 
     # Issue SouvenirX JWT tokens
     access_token = create_access_token({"sub": str(user.id)})

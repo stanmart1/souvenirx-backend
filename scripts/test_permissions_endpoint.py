@@ -6,18 +6,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
+from app.models.rbac import Role, user_roles
 from app.middleware.permissions import user_has_permission
-from app.models.rbac import Permission, Role, role_permissions, user_roles
+from app.models.rbac import Permission, role_permissions
 
 
 async def test():
     async for db in get_db():
         db: AsyncSession
 
-        # Pick the first admin user
+        # Pick the first admin user via RBAC tables
         result = await db.execute(
             select(User)
-            .where(User.role.contains("admin"))
+            .join(user_roles, User.id == user_roles.c.user_id)
+            .join(Role, user_roles.c.role_id == Role.id)
+            .where(Role.name == "admin")
             .limit(1)
         )
         user = result.scalar_one_or_none()
@@ -25,7 +28,7 @@ async def test():
             print("No admin user found to test with")
             break
 
-        print(f"Testing user: {user.email} (role={user.role})")
+        print(f"Testing user: {user.email}")
         print(f"  has_permission('*:*') -> {await user_has_permission(user, '*:*', db)}")
         print(f"  has_permission('users:read') -> {await user_has_permission(user, 'users:read', db)}")
         print(f"  has_permission('orders:write') -> {await user_has_permission(user, 'orders:write', db)}")

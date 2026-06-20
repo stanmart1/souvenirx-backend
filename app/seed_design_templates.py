@@ -638,8 +638,13 @@ async def seed_design_templates(db: AsyncSession | None = None):
         session = db
     try:
         # Get first admin user to set as creator
+        from app.models.rbac import Role, user_roles
         result = await session.execute(
-            select(User).where(User.role == "admin").limit(1)
+            select(User)
+            .join(user_roles, User.id == user_roles.c.user_id)
+            .join(Role, user_roles.c.role_id == Role.id)
+            .where(Role.name == "admin")
+            .limit(1)
         )
         admin = result.scalar_one_or_none()
 

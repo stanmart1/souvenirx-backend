@@ -335,7 +335,11 @@ async def get_order(
     # If user is authenticated and owns the order, return full detail
     # If user is admin, return full detail
     # Otherwise, return limited public info (no PII)
-    if current_user and (order.user_id == current_user.id or current_user.role == "admin"):
+    is_admin = False
+    if current_user:
+        from app.services.rbac import user_has_role
+        is_admin = await user_has_role(db, current_user, "admin")
+    if current_user and (order.user_id == current_user.id or is_admin):
         return _order_detail(order)
     return _order_detail_public(order)
 
