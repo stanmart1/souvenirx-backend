@@ -99,6 +99,7 @@ from app.routes.testimonials import router as testimonials_router
 from app.routes.newsletter import router as newsletter_router
 from app.routes.payment_methods import router as payment_methods_router
 from app.routes.admin import router as admin_router
+from app.routes.admin_rbac import router as admin_rbac_router
 from app.routes.email_templates import router as email_templates_router
 from app.routes.admin_settings import router as admin_settings_router
 from app.routes.stock_notifications import router as stock_notifications_router
@@ -134,6 +135,7 @@ app.include_router(testimonials_router, prefix="/api/testimonials", tags=["Testi
 app.include_router(newsletter_router, prefix="/api/newsletter", tags=["Newsletter"])
 app.include_router(payment_methods_router, prefix="/api/payment-methods", tags=["Payment Methods"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+app.include_router(admin_rbac_router, prefix="/api/admin/rbac", tags=["RBAC Management"])
 app.include_router(email_templates_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(admin_settings_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(stock_notifications_router, prefix="/api/stock-notifications", tags=["Stock Notifications"])

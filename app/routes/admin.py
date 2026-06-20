@@ -3567,15 +3567,17 @@ async def admin_create_user(
     from app.services.auth import hash_password
     from app.services.audit import log_audit, get_client_ip, get_user_agent
     from app.schemas.auth import UserResponse
+    from app.services.rbac import list_roles
 
-    ALLOWED_ROLES = {"customer", "affiliate", "admin"}
     if not body.roles:
         raise HTTPException(status_code=400, detail="At least one role is required")
-    invalid = set(body.roles) - ALLOWED_ROLES
+    active_roles = await list_roles(db)
+    allowed_roles = {r.name for r in active_roles}
+    invalid = set(body.roles) - allowed_roles
     if invalid:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid role(s): {sorted(invalid)}. Allowed: {sorted(ALLOWED_ROLES)}",
+            detail=f"Invalid role(s): {sorted(invalid)}. Allowed: {sorted(allowed_roles)}",
         )
     # Only super-admins may mint new admins.
     from app.services.rbac import user_has_role
@@ -3781,13 +3783,20 @@ async def update_user_roles(
         raise HTTPException(status_code=404, detail="User not found")
     
     raw_roles = body.get("roles", [])
-    valid_roles = ["customer", "affiliate", "admin"]
 
     if not raw_roles:
         raise HTTPException(status_code=400, detail="At least one role is required")
 
-    if not all(r in valid_roles for r in raw_roles):
-        raise HTTPException(status_code=400, detail=f"Invalid role. Valid roles: {', '.join(valid_roles)}")
+    # Validate against all active roles in the RBAC tables, not a hardcoded list
+    from app.services.rbac import list_roles
+    active_roles = await list_roles(db)
+    valid_role_names = {r.name for r in active_roles}
+    invalid = [r for r in raw_roles if r not in valid_role_names]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role(s): {sorted(invalid)}. Allowed: {sorted(valid_role_names)}",
+        )
 
     # De-duplicate while preserving order
     new_roles = list(dict.fromkeys(raw_roles))
