@@ -3603,6 +3603,9 @@ async def admin_create_user(
     db.add(user)
     await db.flush()
 
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
+
     # Optional welcome email (admin explicitly opted in).
     if body.send_welcome_email:
         try:
@@ -3785,6 +3788,10 @@ async def update_user_roles(
     # Adding the affiliate role creates/activates the record; removing it
     # suspends the record. The entire block is flushed in one transaction.
     await _sync_affiliate_record(db, user, new_roles)
+
+    # Keep the new RBAC tables in sync with the legacy role string.
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
 
     await db.flush()
 
@@ -4012,10 +4019,11 @@ async def bulk_update_users(
     elif action == "add_role":
         if not value or value not in ["customer", "affiliate", "admin"]:
             raise HTTPException(status_code=400, detail="Valid role value is required for add_role action")
-        
+
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users = result.scalars().all()
-        
+
+        from app.services.rbac import sync_user_roles_from_legacy
         for user in users:
             roles = user.get_roles()
             if value not in roles:
@@ -4024,16 +4032,18 @@ async def bulk_update_users(
                 if not user.active_role:
                     user.active_role = roles[0]
                 await _sync_affiliate_record(db, user, roles)
-        
+                await sync_user_roles_from_legacy(db, user)
+
         await db.flush()
-        
+
     elif action == "remove_role":
         if not value or value not in ["customer", "affiliate", "admin"]:
             raise HTTPException(status_code=400, detail="Valid role value is required for remove_role action")
-        
+
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users = result.scalars().all()
-        
+
+        from app.services.rbac import sync_user_roles_from_legacy
         for user in users:
             roles = user.get_roles()
             if value in roles:
@@ -4044,7 +4054,8 @@ async def bulk_update_users(
                 if user.active_role == value:
                     user.active_role = roles[0]
                 await _sync_affiliate_record(db, user, roles)
-        
+                await sync_user_roles_from_legacy(db, user)
+
         await db.flush()
         
     else:
@@ -4087,7 +4098,8 @@ async def impersonate_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
     
     # Prevent impersonating other admins
-    if "admin" in customer.role:
+    from app.middleware.permissions import user_has_role
+    if customer.has_role("admin") or await user_has_role(customer, "admin", db):
         raise HTTPException(status_code=403, detail="Cannot impersonate admin users")
     
     # Create impersonation token (JWT with special claim)

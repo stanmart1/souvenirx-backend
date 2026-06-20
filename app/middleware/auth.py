@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.user import User, UserRole
 from app.models.guest_session import GuestSession
 from app.services.auth import decode_token
+from app.middleware.permissions import user_has_role
 
 security = HTTPBearer(auto_error=False)
 
@@ -57,8 +58,13 @@ async def get_optional_user(
         return None
 
 
-async def get_current_admin(user: User = Depends(get_current_user)) -> User:
-    if not user.has_role("admin"):
+async def get_current_admin(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    # Dual-read: legacy role string and new RBAC tables. Either grants access
+    # during the migration period.
+    if not (user.has_role("admin") or await user_has_role(user, "admin", db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
 

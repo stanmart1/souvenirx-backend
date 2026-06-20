@@ -10,7 +10,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
 from app.models.rbac import Permission, Role, role_permissions, user_roles
 from app.models.user import User
 
@@ -24,6 +23,9 @@ def require_permission(permission: str):
             dependencies=[Depends(require_permission("products:write"))],
         )
     """
+    # Import here to avoid a circular import with app.middleware.auth.
+    from app.middleware.auth import get_current_user
+
     async def checker(
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),

@@ -65,6 +65,9 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     db.add(user)
     await db.flush()
 
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
+
     from app.routes.loyalty import award_points, get_rule_value
     signup_bonus = await get_rule_value(db, "signup_bonus")
     if signup_bonus and signup_bonus > 0:
@@ -129,6 +132,9 @@ async def affiliate_register(req: RegisterRequest, request: Request, db: AsyncSe
     )
     db.add(affiliate)
     await db.flush()
+
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
 
     # Send verification email with both click-link and numeric OTP.
     try:
@@ -302,6 +308,9 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     user.active_role = "customer" if user.has_role("customer") else ("affiliate" if user.has_role("affiliate") else user.get_roles()[0])
     await db.flush()
 
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
+
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
         refresh_token=create_refresh_token({"sub": str(user.id)}),
@@ -327,6 +336,9 @@ async def affiliate_login(req: LoginRequest, request: Request, db: AsyncSession 
     user.active_role = "affiliate"
     await db.flush()
 
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
+
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
         refresh_token=create_refresh_token({"sub": str(user.id)}),
@@ -351,6 +363,9 @@ async def admin_login(req: LoginRequest, request: Request, db: AsyncSession = De
     # Set active role to admin
     user.active_role = "admin"
     await db.flush()
+
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
 
     return TokenResponse(
         access_token=create_access_token({"sub": str(user.id)}),
@@ -379,6 +394,51 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.get("/me/permissions")
+async def get_me_permissions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current user's roles and effective permissions from the RBAC tables.
+
+    This is used by the frontend to render navigation and guards based on
+    fine-grained permissions instead of coarse role booleans.
+    """
+    from app.middleware.permissions import user_has_permission
+    from app.models.rbac import Permission, Role, role_permissions
+
+    # Get active role names from the new RBAC tables
+    role_rows = await db.execute(
+        select(Role.name)
+        .join(user_roles, Role.id == user_roles.c.role_id)
+        .where(user_roles.c.user_id == user.id, Role.is_active.is_(True))
+    )
+    rbac_roles = sorted(role_rows.scalars().all())
+
+    # Get effective permissions from the new RBAC tables
+    permission_rows = await db.execute(
+        select(Permission.resource, Permission.action)
+        .join(role_permissions, Permission.id == role_permissions.c.permission_id)
+        .join(user_roles, role_permissions.c.role_id == user_roles.c.role_id)
+        .join(Role, role_permissions.c.role_id == Role.id)
+        .where(
+            user_roles.c.user_id == user.id,
+            Role.is_active.is_(True),
+        )
+        .distinct()
+    )
+    permissions = sorted({f"{r}:{a}" for r, a in permission_rows.all()})
+
+    # Include legacy role string for backwards compatibility during transition.
+    return {
+        "role": user.role,
+        "active_role": user.active_role,
+        "roles": rbac_roles,
+        "permissions": permissions,
+        "is_superuser": await user_has_permission(user, "*:*", db),
+    }
 
 
 @router.put("/me", response_model=UserResponse)
@@ -704,7 +764,10 @@ async def switch_role(
     # Update active role
     user.active_role = role
     await db.flush()
-    
+
+    from app.services.rbac import sync_user_roles_from_legacy
+    await sync_user_roles_from_legacy(db, user)
+
     return {
         "message": f"Switched to {role} role",
         "active_role": role,
