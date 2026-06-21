@@ -46,6 +46,15 @@ class ProductCreate(BaseModel):
     variants: list[ProductVariantIn] = []
     is_group_parent: bool = False
     product_group_id: Optional[int] = None
+    customization_options: Optional[dict] = None
+    # Example: {
+    #   "colors": [{"name": "Gold", "hex": "#D4AF37"}, ...],
+    #   "allow_text": true,
+    #   "allow_icon": true,
+    #   "allow_image": true,
+    #   "allowed_fonts": ["Inter", "Dancing Script"],
+    #   "default_text": "Your text"
+    # }
 
 
 class ProductUpdate(BaseModel):
@@ -60,6 +69,7 @@ class ProductUpdate(BaseModel):
     variants: Optional[list[ProductVariantIn]] = None
     is_group_parent: Optional[bool] = None
     product_group_id: Optional[int] = None
+    customization_options: Optional[dict] = None
 
 
 class CategoryOut(BaseModel):

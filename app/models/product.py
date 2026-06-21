@@ -60,7 +60,18 @@ class Product(Base):
     
     # Variable products support
     has_variants: Mapped[bool] = mapped_column(Boolean, default=False)
-    
+
+    # Customization options for the create flow (colors, text, icon, image, fonts)
+    customization_options: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # Example: {
+    #   "colors": [{"name": "Gold", "hex": "#D4AF37"}, ...],
+    #   "allow_text": true,
+    #   "allow_icon": true,
+    #   "allow_image": true,
+    #   "allowed_fonts": ["Inter", "Dancing Script"],
+    #   "default_text": "Your text"
+    # }
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     category: Mapped["Category"] = relationship(back_populates="products")

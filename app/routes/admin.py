@@ -503,6 +503,14 @@ async def list_products(
                 }
                 for c in p.customizations
             ],
+            "customizationOptions": p.customization_options or {
+                "colors": [],
+                "allow_text": True,
+                "allow_icon": True,
+                "allow_image": True,
+                "allowed_fonts": [],
+                "default_text": "",
+            },
             "variants": [
                 {
                     "id": str(v.id),
@@ -550,6 +558,7 @@ async def create_product(body: ProductCreate, admin: User = Depends(get_current_
         has_variants=len(body.variants) > 0,
         is_group_parent=body.is_group_parent,
         product_group_id=product_group_id,
+        customization_options=body.customization_options,
     )
     db.add(product)
     await db.flush()
@@ -584,7 +593,7 @@ async def update_product(product_id: str, body: ProductUpdate, admin: User = Dep
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    for field in ["name", "description", "base_price", "moq", "stock", "tags", "is_active", "is_group_parent", "product_group_id"]:
+    for field in ["name", "description", "base_price", "moq", "stock", "tags", "is_active", "is_group_parent", "product_group_id", "customization_options"]:
         value = getattr(body, field)
         if value is not None:
             setattr(product, field, value)
@@ -766,6 +775,7 @@ async def duplicate_product(product_id: str, admin: User = Depends(get_current_a
         is_active=False,  # Start inactive
         tags=original.tags,
         has_variants=original.has_variants,
+        customization_options=original.customization_options,
     )
     db.add(duplicate)
     await db.flush()
