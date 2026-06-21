@@ -1,32 +1,32 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.12-slim AS builder
-
-WORKDIR /app
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies first (better caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-
-# Production stage
+# Single-stage build.
+#
+# The previous multi-stage build (builder + COPY --from=builder /install /usr/local)
+# failed on build nodes with limited disk space because the ML dependencies
+# (rembg, onnxruntime, scipy, opencv, llvmlite, …) produce a ~1 GB /install
+# directory that then has to be duplicated into the runtime layer via COPY.
+# Installing directly in the runtime stage avoids that double storage.
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# util-linux provides `setpriv` for dropping privileges after fixing mounts
-# ca-certificates provides SSL root certificates needed for secure database connections
+# Install runtime system packages and build-essential (temporary — needed to
+# compile C extensions for asyncpg, argon2-cffi, cryptography, etc.).
+# build-essential is purged in the same RUN layer so it doesn't bloat the
+# final image, while still keeping the pip install cache-friendly by copying
+# requirements.txt before the application code.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     ca-certificates \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages
-COPY --from=builder /install /usr/local
+# Install Python dependencies first (better layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set Python path so Alembic can find app module
 ENV PYTHONPATH=/app
