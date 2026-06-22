@@ -7,6 +7,8 @@ from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, D
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.orm.exc import DetachedInstanceError
 import uuid
 
 from app.database import Base
@@ -44,7 +46,7 @@ class TrendingTemplate(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-    template = relationship("DesignTemplate", foreign_keys=[template_id])
+    template = relationship("DesignTemplate", foreign_keys=[template_id], lazy="raise")
     
     def __repr__(self):
         return f"<TrendingTemplate {self.display_name or 'Template'}>"
@@ -67,18 +69,23 @@ class TrendingTemplate(Base):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
         
-        # Include template data if available
-        if self.template:
-            result['template'] = {
-                'id': str(self.template.id),
-                'name': self.template.name,
-                'slug': self.template.slug,
-                'category': self.template.category,
-                'style': self.template.style,
-                'thumbnail': self.template.thumbnail,
-                'preview_images': self.template.preview_images,
-                'is_premium': self.template.is_premium,
-                'premium_price': self.template.premium_price,
-            }
+        # Include template data if the relationship has been eager-loaded
+        try:
+            tpl = self.template
+            if tpl is not None:
+                result['template'] = {
+                    'id': str(tpl.id),
+                    'name': tpl.name,
+                    'slug': tpl.slug,
+                    'category': tpl.category,
+                    'style': tpl.style,
+                    'thumbnail': tpl.thumbnail_url,
+                    'preview_images': tpl.preview_images,
+                    'is_premium': tpl.is_premium,
+                    'premium_price': tpl.premium_price,
+                }
+        except (DetachedInstanceError, MissingGreenlet):
+            # Relationship not loaded in async context — skip template data
+            pass
         
         return result

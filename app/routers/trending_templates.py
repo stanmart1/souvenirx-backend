@@ -6,6 +6,7 @@ Manages trending/featured templates for home screen
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import desc, and_, select, func, update
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -70,7 +71,9 @@ async def get_trending_templates(
     """Get trending templates for home screen"""
     now = datetime.now(timezone.utc)
 
-    stmt = select(TrendingTemplate).where(TrendingTemplate.is_active == True)
+    stmt = select(TrendingTemplate).options(
+        selectinload(TrendingTemplate.template)
+    ).where(TrendingTemplate.is_active == True)
 
     if featured_only:
         stmt = stmt.where(
@@ -102,7 +105,9 @@ async def get_all_trending_admin(
 ):
     """Get all trending templates (Admin only)"""
     templates = (await db.execute(
-        select(TrendingTemplate).order_by(
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).order_by(
             desc(TrendingTemplate.trending_score)
         ).offset(skip).limit(limit)
     )).scalars().all()
@@ -130,7 +135,9 @@ async def get_trending_stats(
 
     # Get top trending
     top = (await db.execute(
-        select(TrendingTemplate).order_by(
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).order_by(
             desc(TrendingTemplate.trending_score)
         ).limit(5)
     )).scalars().all()
@@ -157,7 +164,9 @@ async def get_trending_template(
         raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
 
     template = (await db.execute(
-        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).where(TrendingTemplate.id == trending_uuid)
     )).scalar_one_or_none()
 
     if not template:
@@ -228,6 +237,13 @@ async def create_trending_template(
     db.add(trending)
     await db.commit()
     await db.refresh(trending)
+
+    # Eager-load the template relationship to avoid lazy-load in async context
+    trending = (await db.execute(
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).where(TrendingTemplate.id == trending.id)
+    )).scalar_one()
 
     return trending.to_dict()
 
@@ -307,7 +323,9 @@ async def update_trending_template(
         raise HTTPException(status_code=422, detail="Invalid UUID format for trending_id")
 
     template = (await db.execute(
-        select(TrendingTemplate).where(TrendingTemplate.id == trending_uuid)
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).where(TrendingTemplate.id == trending_uuid)
     )).scalar_one_or_none()
 
     if not template:
@@ -319,7 +337,13 @@ async def update_trending_template(
         setattr(template, key, value)
 
     await db.commit()
-    await db.refresh(template)
+
+    # Re-query with eager-loaded template to avoid lazy-load in async context
+    template = (await db.execute(
+        select(TrendingTemplate).options(
+            selectinload(TrendingTemplate.template)
+        ).where(TrendingTemplate.id == trending_uuid)
+    )).scalar_one()
 
     return template.to_dict()
 

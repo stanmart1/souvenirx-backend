@@ -140,6 +140,7 @@ async def get_home_screen_data(
     trending_templates = (
         await db.execute(
             select(TrendingTemplate)
+            .options(selectinload(TrendingTemplate.template))
             .where(TrendingTemplate.is_active == True)
             .order_by(desc(TrendingTemplate.trending_score))
             .limit(8)

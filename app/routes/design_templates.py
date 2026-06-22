@@ -214,6 +214,90 @@ async def create_design_template(
     }
 
 
+@router.get("/admin/templates/stats/overview")
+async def get_templates_stats(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get template statistics overview"""
+    
+    # Total templates
+    result = await db.execute(select(func.count()).select_from(DesignTemplate))
+    total_templates = result.scalar()
+    
+    # Active templates
+    result = await db.execute(
+        select(func.count())
+        .select_from(DesignTemplate)
+        .where(DesignTemplate.is_active == True)
+    )
+    active_templates = result.scalar()
+    
+    # Featured templates
+    result = await db.execute(
+        select(func.count())
+        .select_from(DesignTemplate)
+        .where(DesignTemplate.is_featured == True)
+    )
+    featured_templates = result.scalar()
+    
+    # Premium templates
+    result = await db.execute(
+        select(func.count())
+        .select_from(DesignTemplate)
+        .where(DesignTemplate.is_premium == True)
+    )
+    premium_templates = result.scalar()
+    
+    # Total usage
+    result = await db.execute(
+        select(func.sum(DesignTemplate.usage_count))
+        .select_from(DesignTemplate)
+    )
+    total_usage = result.scalar() or 0
+    
+    # Templates by category
+    result = await db.execute(
+        select(
+            DesignTemplate.category,
+            func.count().label('count')
+        )
+        .group_by(DesignTemplate.category)
+        .order_by(func.count().desc())
+    )
+    by_category = [{"category": row[0], "count": row[1]} for row in result.all()]
+    
+    # Most popular templates
+    result = await db.execute(
+        select(DesignTemplate)
+        .where(DesignTemplate.is_active == True)
+        .order_by(DesignTemplate.usage_count.desc())
+        .limit(10)
+    )
+    popular_templates = result.scalars().all()
+    
+    return {
+        "overview": {
+            "total_templates": total_templates,
+            "active_templates": active_templates,
+            "featured_templates": featured_templates,
+            "premium_templates": premium_templates,
+            "total_usage": total_usage,
+        },
+        "by_category": by_category,
+        "most_popular": [
+            {
+                "id": str(t.id),
+                "name": t.name,
+                "category": t.category,
+                "usage_count": t.usage_count,
+                "thumbnail": t.thumbnail_url,
+            }
+            for t in popular_templates
+        ]
+    }
+
+
 @router.get("/admin/templates/{template_id}")
 async def get_template_detail_admin(
     template_id: str,
@@ -568,90 +652,6 @@ async def save_and_render_template(
         "message": "Template saved and rendered successfully",
         "thumbnail_url": url,
         "preview_images": [url],
-    }
-
-
-@router.get("/admin/templates/stats/overview")
-async def get_templates_stats(
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get template statistics overview"""
-    
-    # Total templates
-    result = await db.execute(select(func.count()).select_from(DesignTemplate))
-    total_templates = result.scalar()
-    
-    # Active templates
-    result = await db.execute(
-        select(func.count())
-        .select_from(DesignTemplate)
-        .where(DesignTemplate.is_active == True)
-    )
-    active_templates = result.scalar()
-    
-    # Featured templates
-    result = await db.execute(
-        select(func.count())
-        .select_from(DesignTemplate)
-        .where(DesignTemplate.is_featured == True)
-    )
-    featured_templates = result.scalar()
-    
-    # Premium templates
-    result = await db.execute(
-        select(func.count())
-        .select_from(DesignTemplate)
-        .where(DesignTemplate.is_premium == True)
-    )
-    premium_templates = result.scalar()
-    
-    # Total usage
-    result = await db.execute(
-        select(func.sum(DesignTemplate.usage_count))
-        .select_from(DesignTemplate)
-    )
-    total_usage = result.scalar() or 0
-    
-    # Templates by category
-    result = await db.execute(
-        select(
-            DesignTemplate.category,
-            func.count().label('count')
-        )
-        .group_by(DesignTemplate.category)
-        .order_by(func.count().desc())
-    )
-    by_category = [{"category": row[0], "count": row[1]} for row in result.all()]
-    
-    # Most popular templates
-    result = await db.execute(
-        select(DesignTemplate)
-        .where(DesignTemplate.is_active == True)
-        .order_by(DesignTemplate.usage_count.desc())
-        .limit(10)
-    )
-    popular_templates = result.scalars().all()
-    
-    return {
-        "overview": {
-            "total_templates": total_templates,
-            "active_templates": active_templates,
-            "featured_templates": featured_templates,
-            "premium_templates": premium_templates,
-            "total_usage": total_usage,
-        },
-        "by_category": by_category,
-        "most_popular": [
-            {
-                "id": str(t.id),
-                "name": t.name,
-                "category": t.category,
-                "usage_count": t.usage_count,
-                "thumbnail": t.thumbnail_url,
-            }
-            for t in popular_templates
-        ]
     }
 
 
